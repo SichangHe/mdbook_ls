@@ -1,0 +1,35 @@
+[workspace]
+members = ["."]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/SichangHe/mdbook_ls"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = { version = "0.1", default_features = false }
+tracing-subscriber = { version = "0.3", default_features = false, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "smallvec",
+] }
+
+[package]
+name = "mdbook_ls"
+version = "0.0.0"
+edition.workspace = true
+description = "mdBook Language Server."
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[profile.release]
+lto = true
