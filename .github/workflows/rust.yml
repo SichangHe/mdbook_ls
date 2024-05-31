@@ -1,0 +1,57 @@
+on:
+  push:
+    paths:
+      - ".github/workflows/rust.yml"
+      - "**.rs"
+      - "**Cargo.toml"
+env:
+  RUSTFLAGS: -Dwarnings
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: true
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust registry based on toml file
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry/cache/
+          key: rust-${{ hashFiles('Cargo.toml') }}
+      - uses: mozilla-actions/sccache-action@v0.0.3
+      - run: cargo test --workspace
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust registry based on toml file
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry/cache/
+          key: rust-${{ hashFiles('Cargo.toml') }}
+      - uses: mozilla-actions/sccache-action@v0.0.3
+      - run: cargo clippy --workspace
+
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - name: Cache Rust registry based on toml file
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry/cache/
+          key: rust-${{ hashFiles('Cargo.toml') }}
+      - uses: mozilla-actions/sccache-action@v0.0.3
+      - run: cargo fmt -- --check
