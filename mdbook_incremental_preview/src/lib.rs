@@ -77,7 +77,7 @@ pub fn execute() -> Result<()> {
         open(serving_url);
     }
 
-    rebuild_on_change(&book_dir, &update_config, &move || {
+    rebuild_on_change(&mut book, &book_dir, &update_config, &move || {
         let _ = tx.send(Message::text("reload"));
     });
 
@@ -144,26 +144,20 @@ async fn serve(
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/watch/native.rs>.
 
 pub fn rebuild_on_change(
+    book: &mut MDBook,
     book_dir: &Path,
     update_config: &dyn Fn(&mut MDBook),
     post_build: &dyn Fn(),
 ) {
-    let mut book = MDBook::load(book_dir).unwrap_or_else(|e| {
-        error!("failed to load book: {e}");
-        std::process::exit(1);
-    });
-
     // Create a channel to receive the events.
     let (tx, rx) = channel();
-    let _debouncer_to_keep_watcher_alive = watch_file_changes(&book, tx);
+    let _debouncer_to_keep_watcher_alive = watch_file_changes(book, tx);
 
     let config_location = book_dir.join("book.toml");
     let maybe_gitignore = maybe_make_gitignore(&book.root);
     info!(?config_location);
     loop {
-        // TODO: Instead of getting the paths,
-        // preserve the events and use the info they contain.
-        let events = recv_changed_paths(&book, &maybe_gitignore, &rx);
+        let events = recv_changed_paths(book, &maybe_gitignore, &rx);
         if !events.is_empty() {
             info!(?events, "File change events");
             /*
@@ -180,7 +174,7 @@ pub fn rebuild_on_change(
                     } else {
                         post_build();
                     }
-                    book = b;
+                    *book = b;
                     info!("rebuilt the book");
                 }
                 Err(err) => error!(?err, "failed to load book config"),
