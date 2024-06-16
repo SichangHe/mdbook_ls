@@ -158,17 +158,20 @@ pub fn rebuild_on_change(
     let _debouncer_to_keep_watcher_alive = watch_file_changes(&book, tx);
 
     let config_location = book_dir.join("book.toml");
+    let maybe_gitignore = maybe_make_gitignore(&book.root);
     info!(?config_location);
     loop {
         // TODO: Instead of getting the paths,
         // preserve the events and use the info they contain.
-        let paths = recv_changed_paths(&book, &rx);
-        if !paths.is_empty() {
-            info!(?paths, "Files changed");
-            if paths.contains(&config_location) {
+        let events = recv_changed_paths(&book, &maybe_gitignore, &rx);
+        if !events.is_empty() {
+            info!(?events, "File change events");
+            /*
+            if events.contains(&config_location) {
                 // TODO: Leverage this info to avoid full rebuilds.
                 // The configuration changed, perform a full rebuild.
             }
+            */
             match MDBook::load(book_dir) {
                 Ok(mut b) => {
                     update_config(&mut b);
@@ -235,16 +238,16 @@ const EVENT_RECEIVE_TIMEOUT: Duration = Duration::from_millis(50);
 
 pub(crate) fn recv_changed_paths(
     book: &MDBook,
+    maybe_gitignore: &Option<(Gitignore, PathBuf)>,
     rx: &Receiver<notify::Result<Vec<DebouncedEvent>>>,
-) -> Vec<PathBuf> {
+) -> Vec<DebouncedEvent> {
     let first_event = rx.recv().unwrap();
     sleep(EVENT_RECEIVE_TIMEOUT);
     let other_events = rx.try_iter();
 
-    let all_events = std::iter::once(first_event).chain(other_events);
-
-    let paths: Vec<_> = all_events
-        .filter_map(|event| match event {
+    std::iter::once(first_event)
+        .chain(other_events)
+        .filter_map(|maybe_events| match maybe_events {
             Ok(events) => Some(events),
             Err(err) => {
                 warn!(?err, "Watching for changes");
@@ -252,42 +255,34 @@ pub(crate) fn recv_changed_paths(
             }
         })
         .flatten()
-        .map(|event| event.path)
-        .collect();
-
-    // If we are watching files outside the current repository (via extra-watch-dirs), then they are definitionally
-    // ignored by gitignore. So we handle this case by including such files into the watched paths list.
-    let any_external_paths = paths.iter().filter(|p| !p.starts_with(&book.root)).cloned();
-    let mut paths = remove_ignored_files(&book.root, &paths[..]);
-    paths.extend(any_external_paths);
-
-    paths
+        .filter(|event| {
+            let path = &event.path;
+            // If we are watching files outside the current repository (via extra-watch-dirs), then they are definitionally
+            // ignored by gitignore. So we handle this case by including such files into the watched paths list.
+            !path.starts_with(&book.root)
+                || match maybe_gitignore {
+                    Some((ignore, ignore_root)) => !is_ignored_file(ignore, ignore_root, path),
+                    None => true,
+                }
+        })
+        .collect::<Vec<_>>()
 }
 
-fn remove_ignored_files(book_root: &Path, paths: &[PathBuf]) -> Vec<PathBuf> {
-    if paths.is_empty() {
-        return vec![];
-    }
-
-    match find_gitignore(book_root) {
-        Some(gitignore_path) => {
-            let (ignore, err) = Gitignore::new(&gitignore_path);
-            if let Some(err) = err {
-                warn!(
-                    "error reading gitignore `{}`: {err}",
-                    gitignore_path.display()
-                );
-            }
-            filter_ignored_files(ignore, paths)
+fn maybe_make_gitignore(book_root: &Path) -> Option<(Gitignore, PathBuf)> {
+    find_ignore_path(book_root).map(|gitignore_path| {
+        let (ignore, err) = Gitignore::new(&gitignore_path);
+        if let Some(err) = err {
+            warn!(?err, ?gitignore_path, "reading gitignore",);
         }
-        None => {
-            // There is no .gitignore file.
-            paths.iter().map(|path| path.to_path_buf()).collect()
-        }
-    }
+        let ignore_root = ignore
+            .path()
+            .canonicalize()
+            .expect("ignore root canonicalize error");
+        (ignore, ignore_root)
+    })
 }
 
-fn find_gitignore(book_root: &Path) -> Option<PathBuf> {
+fn find_ignore_path(book_root: &Path) -> Option<PathBuf> {
     book_root
         .ancestors()
         .map(|p| p.join(".gitignore"))
@@ -296,21 +291,10 @@ fn find_gitignore(book_root: &Path) -> Option<PathBuf> {
 
 // Note: The usage of `canonicalize` may encounter occasional failures on the Windows platform, presenting a potential risk.
 // For more details, refer to [Pull Request #2229](https://github.com/rust-lang/mdBook/pull/2229#discussion_r1408665981).
-fn filter_ignored_files(ignore: Gitignore, paths: &[PathBuf]) -> Vec<PathBuf> {
-    let ignore_root = ignore
-        .path()
-        .canonicalize()
-        .expect("ignore root canonicalize error");
-
-    paths
-        .iter()
-        .filter(|path| {
-            let relative_path = pathdiff::diff_paths(path, &ignore_root)
-                .expect("One of the paths should be an absolute");
-            !ignore
-                .matched_path_or_any_parents(&relative_path, relative_path.is_dir())
-                .is_ignore()
-        })
-        .map(|path| path.to_path_buf())
-        .collect()
+fn is_ignored_file(ignore: &Gitignore, ignore_root: &Path, path: &Path) -> bool {
+    let relative_path =
+        pathdiff::diff_paths(path, ignore_root).expect("One of the paths should be an absolute");
+    ignore
+        .matched_path_or_any_parents(&relative_path, relative_path.is_dir())
+        .is_ignore()
 }
