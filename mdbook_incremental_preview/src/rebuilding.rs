@@ -10,6 +10,7 @@ pub fn rebuild_on_change(book: &mut MDBook, post_build: &dyn Fn()) -> Result<()>
 
     let config_location = book.root.join("book.toml");
     let mut maybe_gitignore = maybe_make_gitignore(&book.root);
+    config_and_build_book(book)?;
     let mut path2book_items = get_path2book_items(book);
     info!(
         ?config_location,

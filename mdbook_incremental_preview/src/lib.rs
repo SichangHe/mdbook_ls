@@ -46,7 +46,6 @@ const LIVE_RELOAD_ENDPOINT: &str = "__livereload";
 pub fn execute() -> Result<()> {
     let book_dir = env::current_dir()?;
     let mut book = MDBook::load(book_dir)?;
-    config_and_build_book(&mut book)?;
 
     // TODO: Currently hardcoded.
     let port = "3000";
