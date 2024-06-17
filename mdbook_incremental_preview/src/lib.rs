@@ -18,14 +18,14 @@ use warp::ws::Message;
 use warp::Filter;
 
 use ignore::gitignore::Gitignore;
-use notify::{FsEventWatcher, RecursiveMode::*};
+use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
 use tracing::*;
 
-mod git_ignore;
-mod rebuilding;
-mod watch_files;
-mod web_server;
+pub mod git_ignore;
+pub mod rebuilding;
+pub mod watch_files;
+pub mod web_server;
 
 use {git_ignore::*, rebuilding::*, watch_files::*, web_server::*};
 
