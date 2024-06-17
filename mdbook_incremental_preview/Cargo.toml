@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 futures-util.workspace = true
+hashbrown.workspace = true
 ignore.workspace = true
 mdbook.workspace = true
 notify.workspace = true

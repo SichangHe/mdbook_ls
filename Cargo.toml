@@ -10,6 +10,7 @@ repository = "https://github.com/SichangHe/mdbook_ls"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
+hashbrown = "0.14"
 ignore = "0.4"
 mdbook = { version = "0.4.40", default_features = false }
 notify = "6"

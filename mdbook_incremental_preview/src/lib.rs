@@ -7,16 +7,13 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context;
-use futures_util::sink::SinkExt;
-use futures_util::StreamExt;
-use mdbook::errors::*;
-use mdbook::utils::fs::get_404_output_file;
-use mdbook::MDBook;
+use anyhow::{bail, Context};
+use futures_util::{sink::SinkExt, StreamExt};
+use hashbrown::{HashMap, HashSet};
+use mdbook::{book::Chapter, errors::*, utils::fs::get_404_output_file, BookItem, MDBook};
 use std::net::{SocketAddr, ToSocketAddrs};
 use tokio::sync::broadcast;
-use warp::ws::Message;
-use warp::Filter;
+use warp::{ws::Message, Filter};
 
 use ignore::gitignore::Gitignore;
 use notify::{RecommendedWatcher, RecursiveMode::*};
@@ -79,7 +76,7 @@ pub fn execute() -> Result<()> {
 
     rebuild_on_change(&mut book, &move || {
         let _ = tx.send(Message::text("reload"));
-    });
+    })?;
 
     let _ = thread_handle.join();
 
