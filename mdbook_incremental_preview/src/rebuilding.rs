@@ -3,17 +3,12 @@ use super::*;
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/watch/native.rs>.
 
-pub fn rebuild_on_change(
-    book: &mut MDBook,
-    book_dir: &Path,
-    update_config: &dyn Fn(&mut MDBook),
-    post_build: &dyn Fn(),
-) {
+pub fn rebuild_on_change(book: &mut MDBook, post_build: &dyn Fn()) {
     // Create a channel to receive the events.
     let (tx, rx) = channel();
     let _debouncer_to_keep_watcher_alive = watch_file_changes(book, tx);
 
-    let config_location = book_dir.join("book.toml");
+    let config_location = book.root.join("book.toml");
     let maybe_gitignore = maybe_make_gitignore(&book.root);
     info!(?config_location);
     loop {
@@ -26,13 +21,11 @@ pub fn rebuild_on_change(
                 // The configuration changed, perform a full rebuild.
             }
             */
-            match MDBook::load(book_dir) {
+            match MDBook::load(&book.root) {
                 Ok(mut b) => {
-                    update_config(&mut b);
-                    if let Err(err) = b.build() {
-                        error!(?err, "failed to build the book");
-                    } else {
-                        post_build();
+                    match config_and_build_book(&mut b) {
+                        Ok(()) => post_build(),
+                        Err(err) => error!(?err, "failed to build the book"),
                     }
                     *book = b;
                     info!("rebuilt the book");

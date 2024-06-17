@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 use futures_util::sink::SinkExt;
 use futures_util::StreamExt;
 use mdbook::errors::*;
@@ -22,12 +23,13 @@ use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
 use tracing::*;
 
+pub mod build_book;
 pub mod git_ignore;
 pub mod rebuilding;
 pub mod watch_files;
 pub mod web_server;
 
-use {git_ignore::*, rebuilding::*, watch_files::*, web_server::*};
+use {build_book::*, git_ignore::*, rebuilding::*, watch_files::*, web_server::*};
 
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/serve.rs>.
@@ -38,7 +40,8 @@ const LIVE_RELOAD_ENDPOINT: &str = "__livereload";
 // Serve command implementation
 pub fn execute() -> Result<()> {
     let book_dir = env::current_dir()?;
-    let mut book = MDBook::load(&book_dir)?;
+    let mut book = MDBook::load(book_dir)?;
+    config_and_build_book(&mut book)?;
 
     // TODO: Currently hardcoded.
     let port = "3000";
@@ -46,16 +49,6 @@ pub fn execute() -> Result<()> {
     let open_browser = true;
 
     let address = format!("{}:{}", hostname, port);
-
-    let update_config = |book: &mut MDBook| {
-        book.config
-            .set("output.html.live-reload-endpoint", LIVE_RELOAD_ENDPOINT)
-            .expect("live-reload-endpoint update failed");
-        // Override site-url for local serving of the 404 file
-        book.config.set("output.html.site-url", "/").unwrap();
-    };
-    update_config(&mut book);
-    book.build()?;
 
     let sockaddr: SocketAddr = address
         .to_socket_addrs()?
@@ -84,7 +77,7 @@ pub fn execute() -> Result<()> {
         open(serving_url);
     }
 
-    rebuild_on_change(&mut book, &book_dir, &update_config, &move || {
+    rebuild_on_change(&mut book, &move || {
         let _ = tx.send(Message::text("reload"));
     });
 

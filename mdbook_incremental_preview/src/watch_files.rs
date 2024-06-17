@@ -2,7 +2,10 @@ use super::*;
 
 const DEBOUNCER_TIMEOUT: Duration = Duration::from_millis(20);
 
-pub(crate) fn watch_file_changes<F>(book: &MDBook, event_handler: F) -> Debouncer<RecommendedWatcher>
+pub(crate) fn watch_file_changes<F>(
+    book: &MDBook,
+    event_handler: F,
+) -> Debouncer<RecommendedWatcher>
 where
     F: DebounceEventHandler,
 {
