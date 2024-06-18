@@ -2,6 +2,8 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     ffi::OsStr,
+    fs,
+    net::{SocketAddr, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::mpsc::{channel, Receiver},
     thread::sleep,
@@ -10,25 +12,33 @@ use std::{
 
 use anyhow::{bail, Context};
 use futures_util::{sink::SinkExt, StreamExt};
+use handlebars::Handlebars;
+use ignore::gitignore::Gitignore;
 use mdbook::{
     book::Chapter,
     errors::*,
-    renderer::{HtmlHandlebars, RenderContext, Renderer},
-    utils::fs::get_404_output_file,
+    renderer::{
+        html_handlebars::{
+            hbs_renderer::{make_data, RenderItemContext},
+            search,
+        },
+        HtmlHandlebars, RenderContext, Renderer,
+    },
+    theme,
+    utils::{self, fs::get_404_output_file},
     BookItem, MDBook,
 };
-use std::net::{SocketAddr, ToSocketAddrs};
-use tokio::sync::broadcast;
-use warp::{ws::Message, Filter};
-
-use ignore::gitignore::Gitignore;
 use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
+use serde_json::json;
+use tokio::sync::broadcast;
 use tracing::*;
+use warp::{ws::Message, Filter};
 
 pub mod build_book;
 pub mod git_ignore;
 pub mod rebuilding;
+pub mod rendering;
 pub mod watch_files;
 pub mod web_server;
 
