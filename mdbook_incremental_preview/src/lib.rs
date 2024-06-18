@@ -1,6 +1,5 @@
 use std::{
-    borrow::Cow,
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     env,
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -14,10 +13,10 @@ use futures_util::{sink::SinkExt, StreamExt};
 use mdbook::{
     book::Chapter,
     errors::*,
-    utils::{self, fs::get_404_output_file},
+    renderer::{HtmlHandlebars, RenderContext, Renderer},
+    utils::fs::get_404_output_file,
     BookItem, MDBook,
 };
-use serde_json::json;
 use std::net::{SocketAddr, ToSocketAddrs};
 use tokio::sync::broadcast;
 use warp::{ws::Message, Filter};
@@ -29,7 +28,6 @@ use tracing::*;
 
 pub mod build_book;
 pub mod git_ignore;
-pub mod hbs_renderer;
 pub mod rebuilding;
 pub mod watch_files;
 pub mod web_server;

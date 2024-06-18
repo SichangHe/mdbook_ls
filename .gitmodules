@@ -1,0 +1,4 @@
+[submodule "mdbook_fork4ls"]
+	path = mdbook_fork4ls
+	url = git@github.com:SichangHe/rust-lang--mdBook.git
+	branch = fork4ls_20240618
