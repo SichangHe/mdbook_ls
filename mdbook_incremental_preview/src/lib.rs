@@ -24,10 +24,10 @@ use mdbook::{
         },
         HtmlHandlebars, RenderContext, Renderer,
     },
-    theme,
     utils::{self, fs::get_404_output_file},
     BookItem, MDBook,
 };
+use mdbook::{config::HtmlConfig, theme::Theme};
 use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
 use serde_json::json;
@@ -42,7 +42,7 @@ pub mod rendering;
 pub mod watch_files;
 pub mod web_server;
 
-use {build_book::*, git_ignore::*, rebuilding::*, watch_files::*, web_server::*};
+use {build_book::*, git_ignore::*, rebuilding::*, rendering::*, watch_files::*, web_server::*};
 
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/serve.rs>.

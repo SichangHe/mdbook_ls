@@ -10,11 +10,14 @@ pub fn rebuild_on_change(book: &mut MDBook, post_build: &dyn Fn()) -> Result<()>
 
     let config_location = book.root.join("book.toml");
     let mut maybe_gitignore = maybe_make_gitignore(&book.root);
-    config_and_build_book(book)?;
-    let mut path2book_items = get_path2book_items(book);
+    config_book_for_live_reload(book)?;
+    let mut render_context = make_render_context(book)?;
+    let (mut html_config, mut theme, mut handlebars) =
+        make_html_config_theme_and_handlebars(&render_context)?;
+    let mut rendering = StatefulHtmlHbs::render(&render_context, html_config, &theme, &handlebars)?;
     info!(
         ?config_location,
-        len_path2book_items = path2book_items.len()
+        len_rendering_path2ctxs = rendering.path2ctxs.len()
     );
 
     loop {
@@ -37,44 +40,37 @@ pub fn rebuild_on_change(book: &mut MDBook, post_build: &dyn Fn()) -> Result<()>
             if full_rebuild {
                 match MDBook::load(&book.root) {
                     Ok(mut b) => {
-                        if let Err(err) = config_and_build_book(&mut b) {
-                            error!(?err, "failed to build the book");
+                        if let Err(err) = config_book_for_live_reload(&mut b) {
+                            error!(?err, "configuring the book for live reload");
                         }
-                        drop(path2book_items);
+
+                        drop(rendering); // Needed to reassign `render_context`.
+                        drop(handlebars);
+                        render_context = make_render_context(book)?;
+                        (html_config, theme, handlebars) =
+                            make_html_config_theme_and_handlebars(&render_context)?;
+                        rendering = StatefulHtmlHbs::render(
+                            &render_context,
+                            html_config,
+                            &theme,
+                            &handlebars,
+                        )?;
+
                         *book = b;
-                        path2book_items = get_path2book_items(book);
                         info!("rebuilt the book");
                     }
                     Err(err) => error!(?err, "failed to load book config"),
                 }
             } else {
-                let paths_w_book_item = paths.iter().filter_map(|path| {
-                    path2book_items
-                        .get(path)
-                        .map(|book_item| (path, *book_item))
-                });
-                // TODO: Shananigans to avoid a full rebuild.
-                for (path, book_item) in paths_w_book_item {
-                    let BookItem::Chapter(chapter) = book_item else {
-                        bail!("{book_item:?} should not have any associated path.");
-                    };
-                    debug!(?path, ?chapter.name);
-                    // TODO: Patch the rendering in-place.
-                }
+                paths
+                    .iter()
+                    .filter_map(|path| rendering.path2ctxs.get_key_value(path))
+                    .for_each(|(path, (ctx, chapter))| {
+                        // TODO: Shananigans to avoid a full rebuild.
+                        debug!(?path, ?chapter.name, ?ctx.is_index, "patching");
+                    });
             }
             post_build();
         }
     }
-}
-
-/// Absolute paths of source files to book items.
-fn get_path2book_items(book: &MDBook) -> HashMap<PathBuf, &BookItem> {
-    book.iter()
-        .filter_map(|book_item| match book_item {
-            BookItem::Chapter(Chapter { source_path, .. }) => source_path
-                .as_ref()
-                .map(|source_path| (book.source_dir().join(source_path), book_item)),
-            BookItem::Separator | BookItem::PartTitle(_) => None,
-        })
-        .collect()
 }
