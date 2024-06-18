@@ -2,10 +2,7 @@ use super::*;
 
 const DEBOUNCER_TIMEOUT: Duration = Duration::from_millis(20);
 
-pub(crate) fn watch_file_changes<F>(
-    book: &MDBook,
-    event_handler: F,
-) -> Debouncer<RecommendedWatcher>
+pub fn watch_file_changes<F>(book: &MDBook, event_handler: F) -> Debouncer<RecommendedWatcher>
 where
     F: DebounceEventHandler,
 {
@@ -50,11 +47,12 @@ where
 
 const EVENT_RECEIVE_TIMEOUT: Duration = Duration::from_millis(50);
 
-pub(crate) fn recv_changed_paths(
-    book: &MDBook,
+pub fn recv_changed_paths<P: AsRef<Path>>(
+    book_root: P,
     maybe_gitignore: &Option<(Gitignore, PathBuf)>,
     rx: &Receiver<notify::Result<Vec<DebouncedEvent>>>,
 ) -> HashSet<PathBuf> {
+    let book_root = book_root.as_ref();
     let first_event = rx.recv().unwrap();
     sleep(EVENT_RECEIVE_TIMEOUT);
     let other_events = rx.try_iter();
@@ -73,7 +71,7 @@ pub(crate) fn recv_changed_paths(
             let path = event.path;
             // If we are watching files outside the current repository (via extra-watch-dirs), then they are definitionally
             // ignored by gitignore. So we handle this case by including such files into the watched paths list.
-            match path.starts_with(&book.root) {
+            match path.starts_with(book_root) {
                 true if matches!(
                     maybe_gitignore, Some((ignore, ignore_root)) if is_ignored_file(ignore, ignore_root, &path)
                 ) => None,

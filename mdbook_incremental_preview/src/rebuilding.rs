@@ -8,8 +8,9 @@ pub fn rebuild_on_change(book: &mut MDBook, post_build: &dyn Fn()) -> Result<()>
     let (tx, rx) = channel();
     let _debouncer_to_keep_watcher_alive = watch_file_changes(book, tx);
 
-    let config_location = book.root.join("book.toml");
-    let mut maybe_gitignore = maybe_make_gitignore(&book.root);
+    let book_root = book.root.clone();
+    let config_location = book_root.join("book.toml");
+    let mut maybe_gitignore = maybe_make_gitignore(&book_root);
     config_book_for_live_reload(book)?;
     let mut render_context = make_render_context(book)?;
     let (mut html_config, mut theme, mut handlebars) =
@@ -21,14 +22,14 @@ pub fn rebuild_on_change(book: &mut MDBook, post_build: &dyn Fn()) -> Result<()>
     );
 
     loop {
-        let paths = recv_changed_paths(book, &maybe_gitignore, &rx);
+        let paths = recv_changed_paths(&book_root, &maybe_gitignore, &rx);
         if !paths.is_empty() {
             info!(?paths, "Directories change");
             let full_rebuild = match &maybe_gitignore {
                 Some((_, gitignore_path)) if paths.contains(gitignore_path) => {
                     // Gitignore file changed, update the gitignore and make
                     // a full reload.
-                    maybe_gitignore = maybe_make_gitignore(&book.root);
+                    maybe_gitignore = maybe_make_gitignore(&book_root);
                     debug!("reloaded gitignore");
                     true
                 }
@@ -38,7 +39,7 @@ pub fn rebuild_on_change(book: &mut MDBook, post_build: &dyn Fn()) -> Result<()>
             };
             debug!(full_rebuild);
             if full_rebuild {
-                match MDBook::load(&book.root) {
+                match MDBook::load(&book_root) {
                     Ok(mut b) => {
                         if let Err(err) = config_book_for_live_reload(&mut b) {
                             error!(?err, "configuring the book for live reload");
