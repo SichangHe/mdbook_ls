@@ -25,3 +25,11 @@ thus producing instant updates.
 
     This limitation will hopefully be lifted in the future by
     whitelisting certain preprocessors to be fed with the whole book.
+
+### Future work for incremental preview
+
+- Instead of writing the book to disk, keep the rendering in memory.
+    The plan is to use temporary files.
+- Instead of copying all the asset files,
+    directly serve them from the source directory.
+- Do a full rebuild on manual page refresh.
