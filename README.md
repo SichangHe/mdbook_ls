@@ -27,6 +27,8 @@ It has basically the same functionality as `mdbook serve` but incremental:
     Full rebuilds happen only when the `.gitignore`, `book.toml`, `SUMMARY.md`,
     or the theme directory changes.
 - Build artifacts are stored in a temporary directory in memory.
+- It directly serves asset files from the source directory instead of
+    copying all of them.
 
 ### Incremental preview current limitations
 
@@ -43,8 +45,6 @@ It has basically the same functionality as `mdbook serve` but incremental:
 
 ### Future work for incremental preview
 
-- Instead of copying all the asset files,
-    directly serve them from the source directory.
 - Do a full rebuild on manual page refresh.
 - Make the `link` preprocessor work.
 

@@ -2,6 +2,7 @@ use super::*;
 
 #[tokio::main]
 pub async fn serve(
+    src_dir: PathBuf,
     build_dir: PathBuf,
     address: SocketAddr,
     reload_tx: broadcast::Sender<Message>,
@@ -28,7 +29,7 @@ pub async fn serve(
             })
         });
     // A warp Filter that serves from the filesystem.
-    let book_route = warp::fs::dir(build_dir.clone());
+    let book_route = warp::fs::dir(build_dir.clone()).or(warp::fs::dir(src_dir));
     // The fallback route for 404 errors
     let fallback_route = warp::fs::file(build_dir.join(file_404))
         .map(|reply| warp::reply::with_status(reply, warp::http::StatusCode::NOT_FOUND));

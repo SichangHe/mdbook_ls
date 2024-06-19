@@ -61,6 +61,7 @@ const LIVE_RELOAD_ENDPOINT: &str = "__livereload";
 pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
     let book_dir = env::current_dir()?;
     let mut book = MDBook::load(book_dir)?;
+    let src_dir = book.source_dir();
 
     let build_temp_dir = tempdir()?; // Do not drop; preserve the temporary directory.
     let build_dir = build_temp_dir.path();
@@ -81,6 +82,7 @@ pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
         let build_dir = build_dir.to_path_buf();
         let thread_handle = std::thread::spawn(move || {
             serve(
+                src_dir,
                 build_dir.to_path_buf(),
                 socket_address,
                 reload_tx,
