@@ -1,6 +1,7 @@
 [package]
 name = "mdbook_incremental_preview"
 version = "0.0.0"
+description = "Incrementally preview mdBook, patching changes instead of making full rebuilds."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

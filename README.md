@@ -1,17 +1,27 @@
 # mdBook Language Server
 
 WIP.
-The goal of mdBook_LS is to provide a language server to
+The goal of mdBook LS is to provide a language server to
 preview mdBook projects live.
 
 ## mdBook Incremental Preview
 
-mdBook_incremental_preview provides incremental preview building for
+mdBook_Incremental_Preview provides incremental preview building for
 mdBook projects.
 Unlike `mdbook watch` or `mdbook serve`,
 which are inefficient because they rebuild the whole book on file changes,
 `mdBook_incremental_preview` only patches the changed chapters,
 thus producing instant updates.
+
+### Usage of mdBook Incremental Preview
+
+At your project root, run:
+
+```sh
+mdbook_incremental_preview
+```
+
+It has basically the same functionality as `mdbook serve` but incremental.
 
 ### Incremental preview current limitations
 
@@ -33,3 +43,12 @@ thus producing instant updates.
 - Instead of copying all the asset files,
     directly serve them from the source directory.
 - Do a full rebuild on manual page refresh.
+- Make the `link` preprocessor work.
+
+## Debugging
+
+We use `tracing-subscriber` with the `env-filter` feature to
+emit logs[^tracing-env-filter].
+Please configure the log level by setting the `RUST_LOG` environment variable.
+
+[^tracing-env-filter]: <https://docs.rs/tracing-subscriber/latest/tracing_subscriber/#feature-flags>
