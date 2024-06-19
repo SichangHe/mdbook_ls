@@ -12,5 +12,10 @@ fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
     debug!("Starting");
-    execute()
+
+    // TODO: Currently hardcoded.
+    let socket_address = "localhost:3000".parse()?;
+    let open_browser = true;
+
+    execute(socket_address, open_browser)
 }

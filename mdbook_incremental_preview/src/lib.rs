@@ -6,7 +6,7 @@ use std::{
     io,
     io::Read,
     mem,
-    net::{SocketAddr, ToSocketAddrs},
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::mpsc::{channel, Receiver},
     thread::sleep,
@@ -55,21 +55,10 @@ use {build_book::*, git_ignore::*, rebuilding::*, rendering::*, watch_files::*, 
 const LIVE_RELOAD_ENDPOINT: &str = "__livereload";
 
 // Serve command implementation
-pub fn execute() -> Result<()> {
+pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
     let book_dir = env::current_dir()?;
     let mut book = MDBook::load(book_dir)?;
 
-    // TODO: Currently hardcoded.
-    let port = "3000";
-    let hostname = "localhost";
-    let open_browser = true;
-
-    let address = format!("{}:{}", hostname, port);
-
-    let sockaddr: SocketAddr = address
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("no address found for {}", address))?;
     let build_dir = book.build_dir_for("html");
     let input_404 = book
         .config
@@ -81,13 +70,12 @@ pub fn execute() -> Result<()> {
     // A channel used to broadcast to any websockets to reload when a file changes.
     let (tx, _rx) = tokio::sync::broadcast::channel::<Message>(100);
 
+    let serving_url = format!("http://{}", socket_address);
+    info!("Serving on: {}", serving_url);
     let reload_tx = tx.clone();
     let thread_handle = std::thread::spawn(move || {
-        serve(build_dir, sockaddr, reload_tx, &file_404);
+        serve(build_dir, socket_address, reload_tx, &file_404);
     });
-
-    let serving_url = format!("http://{}", address);
-    info!("Serving on: {}", serving_url);
 
     if open_browser {
         open(serving_url);
