@@ -28,7 +28,7 @@ use mdbook::{
             hbs_renderer::{make_data, RenderItemContext},
             search,
         },
-        HtmlHandlebars, RenderContext, Renderer,
+        HtmlHandlebars, RenderContext,
     },
     theme::Theme,
     utils::{self, fs::get_404_output_file},
@@ -37,6 +37,7 @@ use mdbook::{
 use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
 use serde_json::json;
+use tempfile::tempdir;
 use tokio::sync::broadcast;
 use tracing::*;
 use warp::{ws::Message, Filter};
@@ -61,7 +62,8 @@ pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
     let book_dir = env::current_dir()?;
     let mut book = MDBook::load(book_dir)?;
 
-    let build_dir = book.build_dir_for("html");
+    let build_temp_dir = tempdir()?; // Do not drop; preserve the temporary directory.
+    let build_dir = build_temp_dir.path();
     let input_404 = book
         .config
         .get("output.html.input-404")
@@ -70,16 +72,26 @@ pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
     let file_404 = get_404_output_file(&input_404);
 
     let serving_url = format!("http://{}", socket_address);
-    info!("Serving on: {}", serving_url);
+    info!(?serving_url, ?build_dir, "Serving");
 
-    // A channel used to broadcast to any websockets to reload when a file changes.
-    let (tx, _rx) = tokio::sync::broadcast::channel::<Message>(100);
+    let (tx, thread_handle) = {
+        // A channel used to broadcast to any websockets to reload when a file changes.
+        let (tx, _rx) = tokio::sync::broadcast::channel::<Message>(100);
+        let reload_tx = tx.clone();
+        let build_dir = build_dir.to_path_buf();
+        let thread_handle = std::thread::spawn(move || {
+            serve(
+                build_dir.to_path_buf(),
+                socket_address,
+                reload_tx,
+                &file_404,
+            );
+        });
+        (tx, thread_handle)
+    };
+
     let ready = Arc::new(Barrier::new(2));
     let ready_recv = Arc::clone(&ready);
-    let reload_tx = tx.clone();
-    let thread_handle = std::thread::spawn(move || {
-        serve(build_dir, socket_address, reload_tx, &file_404);
-    });
 
     let browser_opener_thread_handle = open_browser.then(|| {
         std::thread::spawn(move || {
@@ -88,7 +100,7 @@ pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
         })
     });
 
-    rebuild_on_change(&mut book, ready, &move || {
+    rebuild_on_change(&mut book, build_dir, ready, &move || {
         let _ = tx.send(Message::text("reload"));
     })?;
 

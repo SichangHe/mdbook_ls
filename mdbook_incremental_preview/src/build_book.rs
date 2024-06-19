@@ -12,12 +12,10 @@ pub fn config_book_for_live_reload(book: &mut MDBook) -> Result<()> {
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/book/mod.rs>.
 
-pub fn make_render_context(book: &MDBook) -> Result<RenderContext> {
+pub fn make_render_context(book: &MDBook, build_dir: &Path) -> Result<RenderContext> {
     // We only run the HTML renderer.
     let (preprocessed_book, preprocess_ctx) = book.preprocess_book(&RENDERER)?;
 
-    let name = RENDERER.name();
-    let build_dir = book.build_dir_for(name);
     let mut render_context = RenderContext::new(
         book.root.clone(),
         preprocessed_book,
