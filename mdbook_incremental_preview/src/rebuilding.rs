@@ -65,7 +65,11 @@ pub fn rebuild_on_change(
                     true
                 }
                 // Config file or theme changed, make a full reload.
-                _ if paths.contains(&config_location) || paths.contains(&theme_dir) => true,
+                _ if paths.contains(&config_location)
+                    || paths.iter().any(|path| path.starts_with(&theme_dir)) =>
+                {
+                    true
+                }
                 _ => false,
             };
             debug!(full_rebuild);

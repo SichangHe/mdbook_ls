@@ -21,7 +21,12 @@ At your project root, run:
 mdbook_incremental_preview
 ```
 
-It has basically the same functionality as `mdbook serve` but incremental.
+It has basically the same functionality as `mdbook serve` but incremental:
+
+- Chapter changes are patched individually.
+    Full rebuilds happen only when the `.gitignore`, `book.toml`, `SUMMARY.md`,
+    or the theme directory changes.
+- Build artifacts are stored in a temporary directory in memory.
 
 ### Incremental preview current limitations
 
@@ -38,8 +43,6 @@ It has basically the same functionality as `mdbook serve` but incremental.
 
 ### Future work for incremental preview
 
-- Instead of writing the book to disk, keep the rendering in memory.
-    The plan is to use temporary files.
 - Instead of copying all the asset files,
     directly serve them from the source directory.
 - Do a full rebuild on manual page refresh.
