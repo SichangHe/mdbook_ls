@@ -9,9 +9,9 @@ pub const RENDERER: HtmlHandlebars = HtmlHandlebars {};
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/renderer/html_handlebars/hbs_renderer.rs>.
 
-pub fn make_html_config_theme_and_handlebars(
+pub fn html_config_n_theme_dir_n_theme_n_handlebars(
     ctx: &RenderContext,
-) -> Result<(HtmlConfig, Theme, Handlebars)> {
+) -> Result<(HtmlConfig, PathBuf, Theme, Handlebars)> {
     let html_config = ctx.config.html_config().unwrap_or_default();
 
     let theme_dir = match html_config.theme {
@@ -24,7 +24,7 @@ pub fn make_html_config_theme_and_handlebars(
         }
         None => ctx.root.join("theme"),
     };
-    let theme = Theme::new(theme_dir);
+    let theme = Theme::new(theme_dir.clone());
 
     let mut handlebars = Handlebars::new();
 
@@ -43,7 +43,7 @@ pub fn make_html_config_theme_and_handlebars(
     debug!("Register handlebars helpers");
     RENDERER.register_hbs_helpers(&mut handlebars, &html_config);
 
-    Ok((html_config, theme, handlebars))
+    Ok((html_config, theme_dir, theme, handlebars))
 }
 
 impl<'a> StatefulHtmlHbs<'a> {

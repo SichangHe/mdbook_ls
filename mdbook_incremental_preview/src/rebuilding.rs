@@ -17,8 +17,8 @@ pub fn rebuild_on_change(
     let mut maybe_gitignore = maybe_make_gitignore(&book_root);
     config_book_for_live_reload(book)?;
     let mut render_context = make_render_context(book)?;
-    let (mut html_config, mut theme, mut handlebars) =
-        make_html_config_theme_and_handlebars(&render_context)?;
+    let (mut html_config, mut theme_dir, mut theme, mut handlebars) =
+        html_config_n_theme_dir_n_theme_n_handlebars(&render_context)?;
     let mut rendering = StatefulHtmlHbs::render(&render_context, html_config, &theme, &handlebars)?;
     ready.wait(); // Notify that the book is built.
     info!(
@@ -40,8 +40,8 @@ pub fn rebuild_on_change(
                     drop(rendering); // Needed to reassign `render_context`.
                     drop(handlebars);
                     render_context = make_render_context(book)?;
-                    (html_config, theme, handlebars) =
-                        make_html_config_theme_and_handlebars(&render_context)?;
+                    (html_config, theme_dir, theme, handlebars) =
+                        html_config_n_theme_dir_n_theme_n_handlebars(&render_context)?;
                     rendering =
                         StatefulHtmlHbs::render(&render_context, html_config, &theme, &handlebars)?;
 
@@ -63,8 +63,8 @@ pub fn rebuild_on_change(
                     debug!("reloaded gitignore");
                     true
                 }
-                // Config file changed, make a full reload.
-                _ if paths.contains(&config_location) => true,
+                // Config file or theme changed, make a full reload.
+                _ if paths.contains(&config_location) || paths.contains(&theme_dir) => true,
                 _ => false,
             };
             debug!(full_rebuild);
