@@ -14,7 +14,7 @@ fn main() -> Result<()> {
     debug!("Starting");
 
     // TODO: Currently hardcoded.
-    let socket_address = "localhost:3000".parse()?;
+    let socket_address = "127.0.0.1:3000".parse()?;
     let open_browser = true;
 
     execute(socket_address, open_browser)

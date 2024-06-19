@@ -3,12 +3,14 @@ use std::{
     env,
     ffi::OsStr,
     fs::{self, File},
-    io,
-    io::Read,
+    io::{self, Read},
     mem,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::mpsc::{channel, Receiver},
+    sync::{
+        mpsc::{channel, Receiver},
+        Arc, Barrier,
+    },
     thread::sleep,
     time::Duration,
 };
@@ -67,25 +69,31 @@ pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
         .map(ToString::to_string);
     let file_404 = get_404_output_file(&input_404);
 
-    // A channel used to broadcast to any websockets to reload when a file changes.
-    let (tx, _rx) = tokio::sync::broadcast::channel::<Message>(100);
-
     let serving_url = format!("http://{}", socket_address);
     info!("Serving on: {}", serving_url);
+
+    // A channel used to broadcast to any websockets to reload when a file changes.
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Message>(100);
+    let ready = Arc::new(Barrier::new(2));
+    let ready_recv = Arc::clone(&ready);
     let reload_tx = tx.clone();
     let thread_handle = std::thread::spawn(move || {
         serve(build_dir, socket_address, reload_tx, &file_404);
     });
 
-    if open_browser {
-        open(serving_url);
-    }
+    let browser_opener_thread_handle = open_browser.then(|| {
+        std::thread::spawn(move || {
+            ready_recv.wait(); // Wait until the book is built.
+            open(serving_url);
+        })
+    });
 
-    rebuild_on_change(&mut book, &move || {
+    rebuild_on_change(&mut book, ready, &move || {
         let _ = tx.send(Message::text("reload"));
     })?;
 
-    let _ = thread_handle.join();
+    _ = browser_opener_thread_handle.map(|h| h.join());
+    _ = thread_handle.join();
 
     Ok(())
 }
