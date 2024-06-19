@@ -2,7 +2,10 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     ffi::OsStr,
-    fs,
+    fs::{self, File},
+    io,
+    io::Read,
+    mem,
     net::{SocketAddr, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::mpsc::{channel, Receiver},
@@ -15,7 +18,8 @@ use futures_util::{sink::SinkExt, StreamExt};
 use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
 use mdbook::{
-    book::Chapter,
+    book::{Book, Chapter},
+    config::HtmlConfig,
     errors::*,
     renderer::{
         html_handlebars::{
@@ -24,10 +28,10 @@ use mdbook::{
         },
         HtmlHandlebars, RenderContext, Renderer,
     },
+    theme::Theme,
     utils::{self, fs::get_404_output_file},
     BookItem, MDBook,
 };
-use mdbook::{config::HtmlConfig, theme::Theme};
 use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
 use serde_json::json;

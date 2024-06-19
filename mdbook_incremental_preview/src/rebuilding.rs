@@ -21,11 +21,36 @@ pub fn rebuild_on_change(book: &mut MDBook, post_build: &dyn Fn()) -> Result<()>
         len_rendering_path2ctxs = rendering.path2ctxs.len()
     );
 
+    let mut full_rebuild = false;
+    let mut paths;
+
     loop {
-        let paths = recv_changed_paths(&book_root, &maybe_gitignore, &rx);
+        if full_rebuild {
+            match MDBook::load(&book_root) {
+                Ok(mut b) => {
+                    if let Err(err) = config_book_for_live_reload(&mut b) {
+                        error!(?err, "configuring the book for live reload");
+                    }
+
+                    drop(rendering); // Needed to reassign `render_context`.
+                    drop(handlebars);
+                    render_context = make_render_context(book)?;
+                    (html_config, theme, handlebars) =
+                        make_html_config_theme_and_handlebars(&render_context)?;
+                    rendering =
+                        StatefulHtmlHbs::render(&render_context, html_config, &theme, &handlebars)?;
+
+                    *book = b;
+                    info!("rebuilt the book");
+                }
+                Err(err) => error!(?err, "failed to load book config"),
+            }
+            post_build();
+        }
+        paths = recv_changed_paths(&book_root, &maybe_gitignore, &rx);
         if !paths.is_empty() {
             info!(?paths, "Directories change");
-            let full_rebuild = match &maybe_gitignore {
+            full_rebuild = match &maybe_gitignore {
                 Some((_, gitignore_path)) if paths.contains(gitignore_path) => {
                     // Gitignore file changed, update the gitignore and make
                     // a full reload.
@@ -38,40 +63,15 @@ pub fn rebuild_on_change(book: &mut MDBook, post_build: &dyn Fn()) -> Result<()>
                 _ => false,
             };
             debug!(full_rebuild);
-            if full_rebuild {
-                match MDBook::load(&book_root) {
-                    Ok(mut b) => {
-                        if let Err(err) = config_book_for_live_reload(&mut b) {
-                            error!(?err, "configuring the book for live reload");
-                        }
-
-                        drop(rendering); // Needed to reassign `render_context`.
-                        drop(handlebars);
-                        render_context = make_render_context(book)?;
-                        (html_config, theme, handlebars) =
-                            make_html_config_theme_and_handlebars(&render_context)?;
-                        rendering = StatefulHtmlHbs::render(
-                            &render_context,
-                            html_config,
-                            &theme,
-                            &handlebars,
-                        )?;
-
-                        *book = b;
-                        info!("rebuilt the book");
+            if !full_rebuild {
+                match rendering.patch(book, &paths) {
+                    Ok(_) => post_build(),
+                    Err(err) => {
+                        error!(?err, "patching the book. Falling back to a full rebuild.");
+                        full_rebuild = true;
                     }
-                    Err(err) => error!(?err, "failed to load book config"),
                 }
-            } else {
-                paths
-                    .iter()
-                    .filter_map(|path| rendering.path2ctxs.get_key_value(path))
-                    .for_each(|(path, (ctx, chapter))| {
-                        // TODO: Shananigans to avoid a full rebuild.
-                        debug!(?path, ?chapter.name, ?ctx.is_index, "patching");
-                    });
             }
-            post_build();
         }
     }
 }

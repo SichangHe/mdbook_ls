@@ -161,4 +161,56 @@ impl<'a> StatefulHtmlHbs<'a> {
 
         Ok(Self { path2ctxs })
     }
+
+    /// Patch the built book for the `paths` changed.
+    ///
+    /// # Limitation
+    /// Each patched chapter is preprocessed and rendered individually without
+    /// any context of other chapters in the book,
+    /// so preprocessors that operate across multiple book items, like `link`,
+    /// are not supported.
+    pub fn patch<'i, I: IntoIterator<Item = &'i PathBuf>>(
+        &mut self,
+        book: &mut MDBook,
+        paths: I,
+    ) -> Result<()> {
+        let original_book_preserved = mem::take(&mut book.book);
+
+        // TODO: Support preprocessors like `link`.
+        for path in paths.into_iter() {
+            let Some((ctx, chapter)) = self.path2ctxs.get_mut(path) else {
+                continue;
+            };
+            debug!(?path, ?chapter.name, ?ctx.is_index, "patching");
+
+            let content = load_content_of_chapter(path, chapter)?;
+            let chapter = Chapter::new(&chapter.name, content, path, vec![]);
+            let mut patcher_book = Book::new();
+            patcher_book.sections = vec![BookItem::Chapter(chapter)];
+            book.book = patcher_book;
+            let (preprocessed_book, _) = book.preprocess_book(&RENDERER)?;
+            let item = preprocessed_book
+                .iter()
+                .next()
+                .with_context(|| format!("{:?} preprocessed to an empty book.", book.book))?;
+            RENDERER.render_item(item, ctx, &mut String::new())?;
+        }
+
+        book.book = original_book_preserved;
+        Ok(())
+    }
+}
+
+fn load_content_of_chapter(path: &PathBuf, chapter: &Chapter) -> io::Result<String> {
+    let mut content = String::with_capacity(chapter.content.len() * 2);
+    {
+        let mut f = File::open(path)?;
+        f.read_to_string(&mut content)?;
+    }
+    if content.as_bytes().starts_with(b"\xef\xbb\xbf") {
+        content.replace_range(..3, "");
+    }
+    content.shrink_to_fit();
+
+    Ok(content)
 }
