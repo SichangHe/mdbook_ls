@@ -38,7 +38,10 @@ use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
 use serde_json::json;
 use tempfile::tempdir;
-use tokio::sync::broadcast;
+use tokio::{
+    sync::broadcast,
+    task::{yield_now, JoinSet},
+};
 use tracing::*;
 use warp::{ws::Message, Filter};
 
@@ -58,58 +61,57 @@ use {build_book::*, git_ignore::*, rebuilding::*, rendering::*, watch_files::*, 
 const LIVE_RELOAD_ENDPOINT: &str = "__livereload";
 
 // Serve command implementation
-pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
+pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
     let book_dir = env::current_dir()?;
     let mut book = MDBook::load(book_dir)?;
     let src_dir = book.source_dir();
 
     let build_temp_dir = tempdir()?; // Do not drop; preserve the temporary directory.
+    yield_now().await;
     let build_dir = build_temp_dir.path();
     let input_404 = book
         .config
         .get("output.html.input-404")
         .and_then(toml::Value::as_str)
         .map(ToString::to_string);
-    let file_404 = get_404_output_file(&input_404);
+    let file_404 = build_dir.join(get_404_output_file(&input_404));
+    yield_now().await;
 
     let serving_url = format!("http://{}", socket_address);
     info!(?serving_url, ?build_dir, "Serving");
 
-    let (tx, thread_handle) = {
+    let mut join_set = JoinSet::new();
+    let tx = {
         // A channel used to broadcast to any websockets to reload when a file changes.
-        let (tx, _rx) = tokio::sync::broadcast::channel::<Message>(100);
+        let (tx, _rx) = broadcast::channel::<Message>(100);
         let reload_tx = tx.clone();
         let src_dir = src_dir.clone();
         let build_dir = build_dir.to_path_buf();
-        let thread_handle = std::thread::spawn(move || {
-            serve(
-                src_dir,
-                build_dir.to_path_buf(),
-                socket_address,
-                reload_tx,
-                &file_404,
-            );
-        });
-        (tx, thread_handle)
+        join_set.spawn(serve(
+            src_dir,
+            build_dir.to_path_buf(),
+            socket_address,
+            reload_tx,
+            file_404,
+        ));
+        tx
     };
 
     let ready = Arc::new(Barrier::new(2));
     let ready_recv = Arc::clone(&ready);
 
-    let browser_opener_thread_handle = open_browser.then(|| {
-        std::thread::spawn(move || {
+    if open_browser {
+        join_set.spawn_blocking(move || {
             ready_recv.wait(); // Wait until the book is built.
             open(serving_url);
-        })
-    });
+        });
+    }
 
     rebuild_on_change(&mut book, &src_dir, build_dir, ready, &move || {
         let _ = tx.send(Message::text("reload"));
     })?;
 
-    _ = browser_opener_thread_handle.map(|h| h.join());
-    _ = thread_handle.join();
-
+    join_set.shutdown().await;
     Ok(())
 }
 

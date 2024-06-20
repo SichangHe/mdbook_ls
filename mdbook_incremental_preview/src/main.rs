@@ -5,7 +5,8 @@ use mdbook_incremental_preview::execute;
 use tracing::*;
 use tracing_subscriber::EnvFilter;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_ansi(true)
         .with_writer(stderr)
@@ -17,5 +18,5 @@ fn main() -> Result<()> {
     let socket_address = "127.0.0.1:3000".parse()?;
     let open_browser = true;
 
-    execute(socket_address, open_browser)
+    execute(socket_address, open_browser).await
 }
