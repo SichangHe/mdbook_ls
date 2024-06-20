@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Default)]
 pub struct StatefulHtmlHbs<'a> {
     pub path2ctxs: HashMap<PathBuf, (RenderItemContext<'a>, &'a Chapter)>,
 }

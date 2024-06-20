@@ -7,10 +7,7 @@ use std::{
     mem,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{
-        mpsc::{channel, Receiver},
-        Arc, Barrier,
-    },
+    sync::mpsc::{channel, Receiver},
     thread::sleep,
     time::Duration,
 };
@@ -40,7 +37,7 @@ use serde_json::json;
 use tempfile::tempdir;
 use tokio::{
     sync::broadcast,
-    task::{yield_now, JoinSet},
+    task::{block_in_place, yield_now, JoinSet},
 };
 use tracing::*;
 use warp::{ws::Message, Filter};
@@ -62,54 +59,42 @@ const LIVE_RELOAD_ENDPOINT: &str = "__livereload";
 
 // Serve command implementation
 pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
-    let book_dir = env::current_dir()?;
-    let mut book = MDBook::load(book_dir)?;
-    let src_dir = book.source_dir();
-
     let build_temp_dir = tempdir()?; // Do not drop; preserve the temporary directory.
-    yield_now().await;
     let build_dir = build_temp_dir.path();
-    let input_404 = book
-        .config
-        .get("output.html.input-404")
-        .and_then(toml::Value::as_str)
-        .map(ToString::to_string);
-    let file_404 = build_dir.join(get_404_output_file(&input_404));
     yield_now().await;
 
     let serving_url = format!("http://{}", socket_address);
-    info!(?serving_url, ?build_dir, "Serving");
+    info!(?serving_url, ?build_dir, "Will serve");
 
     let mut join_set = JoinSet::new();
-    let tx = {
+    let (tx, info_tx) = {
         // A channel used to broadcast to any websockets to reload when a file changes.
         let (tx, _rx) = broadcast::channel::<Message>(100);
         let reload_tx = tx.clone();
-        let src_dir = src_dir.clone();
+
+        // TODO: A watch channel may be better.
+        let (info_tx, info_rx) = tokio::sync::mpsc::channel(8);
         let build_dir = build_dir.to_path_buf();
-        join_set.spawn(serve(
-            src_dir,
-            build_dir.to_path_buf(),
+        join_set.spawn(serve_reloading(
             socket_address,
+            build_dir,
             reload_tx,
-            file_404,
+            info_rx,
         ));
-        tx
+        (tx, info_tx)
     };
 
-    let ready = Arc::new(Barrier::new(2));
-    let ready_recv = Arc::clone(&ready);
-
-    if open_browser {
-        join_set.spawn_blocking(move || {
-            ready_recv.wait(); // Wait until the book is built.
-            open(serving_url);
-        });
-    }
-
-    rebuild_on_change(&mut book, &src_dir, build_dir, ready, &move || {
-        let _ = tx.send(Message::text("reload"));
-    })?;
+    rebuild_on_change(
+        env::current_dir()?,
+        serving_url,
+        build_dir,
+        info_tx,
+        open_browser,
+        &move || {
+            let _ = tx.send(Message::text("reload"));
+        },
+    )
+    .await?;
 
     join_set.shutdown().await;
     Ok(())

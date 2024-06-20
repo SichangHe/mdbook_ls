@@ -1,4 +1,40 @@
+use tokio::select;
+
 use super::*;
+
+pub async fn serve_reloading(
+    address: SocketAddr,
+    build_dir: PathBuf,
+    reload_tx: broadcast::Sender<Message>,
+    mut info_rx: tokio::sync::mpsc::Receiver<ServeInfo>,
+) {
+    let Some(mut info) = info_rx.recv().await else {
+        error!("Did not start server because all info senders have been dropped.");
+        return;
+    };
+    info!("Starting server with reloading.");
+    loop {
+        let ServeInfo { src_dir, file_404 } = info.clone();
+        let maybe_maybe_info = select! {
+            _ = serve(src_dir, build_dir.clone(), address, reload_tx.clone(), file_404) => None,
+            maybe_info = info_rx.recv() => Some(maybe_info),
+        };
+        match maybe_maybe_info {
+            None => {}
+            Some(None) => {
+                info!("Stopping server reloading because all info senders have been dropped.");
+                return;
+            }
+            Some(Some(new_info)) => info = new_info,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ServeInfo {
+    pub src_dir: PathBuf,
+    pub file_404: PathBuf,
+}
 
 pub async fn serve(
     src_dir: PathBuf,
