@@ -160,6 +160,8 @@ impl<'a> StatefulHtmlHbs<'a> {
 
     /// Patch the built book for the `paths` changed.
     ///
+    /// - `paths` are absolute paths.
+    ///
     /// # Limitation
     /// Each patched chapter is preprocessed and rendered individually without
     /// any context of other chapters in the book,
@@ -168,6 +170,7 @@ impl<'a> StatefulHtmlHbs<'a> {
     pub fn patch<'i, I: IntoIterator<Item = &'i PathBuf>>(
         &mut self,
         book: &mut MDBook,
+        src_dir: &Path,
         paths: I,
     ) -> Result<()> {
         let original_book_preserved = mem::take(&mut book.book);
@@ -180,7 +183,8 @@ impl<'a> StatefulHtmlHbs<'a> {
             debug!(?path, ?chapter.name, ?ctx.is_index, "patching");
 
             let content = load_content_of_chapter(path, chapter)?;
-            let chapter = Chapter::new(&chapter.name, content, path, vec![]);
+            let relative_path = path.strip_prefix(src_dir)?;
+            let chapter = Chapter::new(&chapter.name, content, relative_path, vec![]);
             let mut patcher_book = Book::new();
             patcher_book.sections = vec![BookItem::Chapter(chapter)];
             book.book = patcher_book;

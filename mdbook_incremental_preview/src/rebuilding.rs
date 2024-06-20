@@ -5,6 +5,7 @@ use super::*;
 
 pub fn rebuild_on_change(
     book: &mut MDBook,
+    src_dir: &Path,
     build_dir: &Path,
     ready: Arc<Barrier>,
     post_build: &dyn Fn(),
@@ -74,7 +75,7 @@ pub fn rebuild_on_change(
             };
             debug!(full_rebuild);
             if !full_rebuild {
-                match rendering.patch(book, &paths) {
+                match rendering.patch(book, src_dir, &paths) {
                     Ok(_) => post_build(),
                     Err(err) => {
                         error!(?err, "patching the book. Falling back to a full rebuild.");

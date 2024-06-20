@@ -79,6 +79,7 @@ pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
         // A channel used to broadcast to any websockets to reload when a file changes.
         let (tx, _rx) = tokio::sync::broadcast::channel::<Message>(100);
         let reload_tx = tx.clone();
+        let src_dir = src_dir.clone();
         let build_dir = build_dir.to_path_buf();
         let thread_handle = std::thread::spawn(move || {
             serve(
@@ -102,7 +103,7 @@ pub fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
         })
     });
 
-    rebuild_on_change(&mut book, build_dir, ready, &move || {
+    rebuild_on_change(&mut book, &src_dir, build_dir, ready, &move || {
         let _ = tx.send(Message::text("reload"));
     })?;
 

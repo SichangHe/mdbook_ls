@@ -42,11 +42,13 @@ It has basically the same functionality as `mdbook serve` but incremental:
 
     This limitation will hopefully be lifted in the future by
     whitelisting certain preprocessors to be fed with the whole book.
+- The book's source directory cannot be changed after the preview starts.
 
 ### Future work for incremental preview
 
 - Do a full rebuild on manual page refresh.
 - Make the `link` preprocessor work.
+- Avoid copying static files, additional JavaScript, and CSS files.
 
 ## Debugging
 
