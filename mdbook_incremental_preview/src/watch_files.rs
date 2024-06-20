@@ -2,7 +2,14 @@ use super::*;
 
 const DEBOUNCER_TIMEOUT: Duration = Duration::from_millis(20);
 
-pub fn watch_file_changes<F>(book: &MDBook, event_handler: F) -> Debouncer<RecommendedWatcher>
+pub fn watch_file_changes<F>(
+    book_root: &Path,
+    src_dir: &Path,
+    theme_dir: &Path,
+    book_toml: &Path,
+    extra_watch_dirs: &[PathBuf],
+    event_handler: F,
+) -> Debouncer<RecommendedWatcher>
 where
     F: DebounceEventHandler,
 {
@@ -18,18 +25,18 @@ where
     let watcher = debouncer.watcher();
 
     // Add the source directory to the watcher
-    if let Err(err) = watcher.watch(&book.source_dir(), Recursive) {
-        error!(source_dir = ?book.source_dir(), ?err, "watching");
+    if let Err(err) = watcher.watch(src_dir, Recursive) {
+        error!(?src_dir, ?err, "watching");
         std::process::exit(1);
     };
 
-    let _ = watcher.watch(&book.theme_dir(), Recursive);
+    let _ = watcher.watch(theme_dir, Recursive);
 
     // Add the book.toml file to the watcher if it exists
-    let _ = watcher.watch(&book.root.join("book.toml"), NonRecursive);
+    let _ = watcher.watch(book_toml, NonRecursive);
 
-    for dir in &book.config.build.extra_watch_dirs {
-        let path = book.root.join(dir);
+    for dir in extra_watch_dirs {
+        let path = book_root.join(dir);
         let canonical_path = path.canonicalize().unwrap_or_else(|err| {
             error!(?path, ?err, "Watching extra directory");
             std::process::exit(1);

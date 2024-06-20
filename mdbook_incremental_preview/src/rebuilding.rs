@@ -11,18 +11,20 @@ pub async fn rebuild_on_change(
     mut open_browser: bool,
     post_build: &dyn Fn(),
 ) -> Result<()> {
-    let config_location = book_root.join("book.toml");
+    let book_toml = book_root.join("book.toml");
     // Create a channel to receive the events.
     let (tx, rx) = channel();
 
     let mut _debouncer_to_keep_watcher_alive;
     let (mut render_context, mut html_config, mut theme);
-    let (mut book, mut src_dir, mut file_404, mut maybe_gitignore) = Default::default();
+    let (mut book, mut file_404, mut maybe_gitignore, mut summary_md) = Default::default();
     let (mut theme_dir, mut handlebars, mut rendering) = Default::default();
+    let (mut src_dir, mut extra_watch_dirs): (PathBuf, Vec<_>) = Default::default();
     let (mut full_rebuild, mut reload_watcher, mut reload_server) = (true, true, true);
     yield_now().await;
 
     loop {
+        let (mut src_dir_changed, mut theme_dir_changed) = (None, false);
         if mem::take(&mut full_rebuild) {
             info!(?build_dir, "Full rebuild");
             match block_in_place(|| MDBook::load(&book_root)) {
@@ -36,9 +38,11 @@ pub async fn rebuild_on_change(
                     drop(rendering); // Needed to reassign `render_context`.
                     drop(handlebars);
                     render_context = make_render_context(&book, build_dir)?;
+                    let old_theme_dir = theme_dir;
                     (html_config, theme_dir, theme, handlebars) = block_in_place(|| {
                         html_config_n_theme_dir_n_theme_n_handlebars(&render_context)
                     })?;
+                    theme_dir_changed = old_theme_dir != theme_dir;
                     rendering = block_in_place(|| {
                         StatefulHtmlHbs::render(&render_context, html_config, &theme, &handlebars)
                     })?;
@@ -54,13 +58,56 @@ pub async fn rebuild_on_change(
             post_build();
         }
         if mem::take(&mut reload_watcher) {
-            // TODO: Decide if this reload is needed in a finer grained sense.
-            info!(?book_root, "Reloading the watcher");
-            _debouncer_to_keep_watcher_alive =
-                block_in_place(|| watch_file_changes(&book, tx.clone()));
+            let new_src_dir = book.source_dir();
+            src_dir_changed = Some(match new_src_dir == src_dir {
+                false => {
+                    src_dir = new_src_dir;
+                    summary_md = src_dir.join("SUMMARY.md");
+                    true
+                }
+                true => false,
+            });
+
+            let extra_watch_dirs_changed =
+                match extra_watch_dirs == book.config.build.extra_watch_dirs {
+                    false => {
+                        extra_watch_dirs.clone_from(&book.config.build.extra_watch_dirs);
+                        true
+                    }
+                    true => false,
+                };
+
+            debug!(
+                ?src_dir_changed,
+                theme_dir_changed, extra_watch_dirs_changed
+            );
+            if src_dir_changed == Some(true) || theme_dir_changed || extra_watch_dirs_changed {
+                info!(?book_root, "Reloading the watcher");
+                _debouncer_to_keep_watcher_alive = block_in_place(|| {
+                    watch_file_changes(
+                        &book_root,
+                        &src_dir,
+                        &theme_dir,
+                        &book_toml,
+                        &extra_watch_dirs,
+                        tx.clone(),
+                    )
+                });
+            }
         }
         if mem::take(&mut reload_server) {
-            let new_src_dir = book.source_dir();
+            let src_dir_changed = src_dir_changed.unwrap_or_else(|| {
+                let new_src_dir = book.source_dir();
+                match new_src_dir == src_dir {
+                    false => {
+                        src_dir = new_src_dir;
+                        summary_md = src_dir.join("SUMMARY.md");
+                        true
+                    }
+                    true => false,
+                }
+            });
+
             let input_404 = book
                 .config
                 .get("output.html.input-404")
@@ -68,9 +115,16 @@ pub async fn rebuild_on_change(
                 .map(ToString::to_string);
             let new_file_404 = build_dir.join(get_404_output_file(&input_404));
             yield_now().await;
+            let file_404_changed = match new_file_404 == file_404 {
+                false => {
+                    file_404 = new_file_404;
+                    true
+                }
+                true => false,
+            };
 
-            if (new_src_dir != src_dir) || (new_file_404 != file_404) {
-                (src_dir, file_404) = (new_src_dir, new_file_404);
+            debug!(src_dir_changed, file_404_changed);
+            if src_dir_changed || file_404_changed {
                 info!(?src_dir, ?file_404, "Reloading the server");
                 info_tx
                     .send(ServeInfo {
@@ -88,7 +142,6 @@ pub async fn rebuild_on_change(
         let paths = block_in_place(|| recv_changed_paths(&book_root, &maybe_gitignore, &rx));
         if !paths.is_empty() {
             info!(?paths, "Directories changed");
-            // TODO: Watch `SUMMARY.md`.
             (full_rebuild, reload_watcher, reload_server) = match &maybe_gitignore {
                 Some((_, gitignore_path)) if paths.contains(gitignore_path) => {
                     // Gitignore file changed,
@@ -97,11 +150,15 @@ pub async fn rebuild_on_change(
                     debug!("reloaded gitignore");
                     (true, false, false)
                 }
-                // Config file changed, make a full rebuild,
+                // `book.toml` changed, make a full rebuild,
                 // reload the watcher and the server.
-                _ if paths.contains(&config_location) => (true, true, true),
-                // Theme changed, make a full rebuild.
-                _ if paths.iter().any(|path| path.starts_with(&theme_dir)) => (true, false, false),
+                _ if paths.contains(&book_toml) => (true, true, true),
+                // `Summary.md` or theme changed, make a full rebuild.
+                _ if paths.contains(&summary_md)
+                    || paths.iter().any(|path| path.starts_with(&theme_dir)) =>
+                {
+                    (true, false, false)
+                }
                 _ => (false, false, false),
             };
             debug!(full_rebuild, reload_watcher, reload_server);
