@@ -32,21 +32,22 @@ It has basically the same functionality as `mdbook serve` but incremental:
 
 ### Incremental preview current limitations
 
-- Preprocessors that operate across multiple book item, like `link`,
-    are not supported.
+- Preprocessors that operate across multiple book item are not supported.
     The results may be incorrect,
     or the implementation may fall back to a full rebuild.
     This is because
     we feed the preprocessors the individual chapters rather than
     the whole book when patching.
 
-    This limitation will hopefully be lifted in the future by
-    whitelisting certain preprocessors to be fed with the whole book.
+    This is irrelevant for most preprocessors,
+    which operate on a single chapter.
+    Even the `link` preprocessor works because
+    it reads the input files directly.
 
 ### Future work for incremental preview
 
 - Do a full rebuild on manual page refresh.
-- Make the `link` preprocessor work.
+- Background search indexing to save full rebuild time.
 
 ## Debugging
 

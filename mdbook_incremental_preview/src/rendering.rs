@@ -135,12 +135,13 @@ impl<'a> StatefulHtmlHbs<'a> {
             );
 
             utils::fs::write_file(destination, "print.html", rendered.as_bytes())?;
-            debug!("Creating print.html ✓");
+            debug!("Created print.html ✓");
         }
 
         // Render search index
         let search = html_config.search.unwrap_or_default();
         if search.enable {
+            debug!("Search indexing");
             search::create_files(&search, destination, book)?;
         }
 
@@ -169,7 +170,6 @@ impl<'a> StatefulHtmlHbs<'a> {
     ) -> Result<()> {
         let original_book_preserved = mem::take(&mut book.book);
 
-        // TODO: Support preprocessors like `link`.
         for path in paths.into_iter() {
             let Some((ctx, chapter)) = self.path2ctxs.get_mut(path) else {
                 continue;
