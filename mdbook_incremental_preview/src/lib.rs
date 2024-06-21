@@ -4,7 +4,7 @@ use std::{
     ffi::OsStr,
     fs::{self, File},
     io::{self, Read},
-    mem,
+    iter, mem,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::mpsc::{channel, Receiver},
@@ -43,7 +43,7 @@ use tokio::{
 use tracing::*;
 use warp::{
     filters::{path::FullPath, BoxedFilter},
-    reply::with_header,
+    reply::{with_header, WithHeader},
     ws::Message,
     Filter,
 };
