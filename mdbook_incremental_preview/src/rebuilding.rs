@@ -16,9 +16,10 @@ pub async fn rebuild_on_change(
     let (tx, rx) = channel();
 
     let mut _debouncer_to_keep_watcher_alive;
-    let (mut render_context, mut html_config, mut theme);
+    let (mut render_context, mut theme);
     let (mut book, mut file_404, mut maybe_gitignore, mut summary_md) = Default::default();
     let (mut theme_dir, mut handlebars, mut rendering) = Default::default();
+    let (mut html_config, mut old_html_config) = Default::default();
     let (mut src_dir, mut extra_watch_dirs): (PathBuf, Vec<_>) = Default::default();
     let (mut full_rebuild, mut reload_watcher, mut reload_server) = (true, true, true);
     yield_now().await;
@@ -39,12 +40,18 @@ pub async fn rebuild_on_change(
                     drop(handlebars);
                     render_context = make_render_context(&book, build_dir)?;
                     let old_theme_dir = theme_dir;
+                    old_html_config = html_config;
                     (html_config, theme_dir, theme, handlebars) = block_in_place(|| {
                         html_config_n_theme_dir_n_theme_n_handlebars(&render_context)
                     })?;
                     theme_dir_changed = old_theme_dir != theme_dir;
                     rendering = block_in_place(|| {
-                        StatefulHtmlHbs::render(&render_context, html_config, &theme, &handlebars)
+                        StatefulHtmlHbs::render(
+                            &render_context,
+                            html_config.clone(),
+                            &theme,
+                            &handlebars,
+                        )
                     })?;
 
                     info!(
@@ -124,11 +131,18 @@ pub async fn rebuild_on_change(
             };
 
             debug!(src_dir_changed, file_404_changed);
-            if src_dir_changed || file_404_changed {
-                info!(?src_dir, ?file_404, "Reloading the server");
+            if src_dir_changed
+                || html_config.additional_js != old_html_config.additional_js
+                || html_config.additional_css != old_html_config.additional_css
+                || file_404_changed
+            {
+                info!(?src_dir, ?html_config.additional_js, ?html_config.additional_css, ?file_404, "Reloading the server");
                 info_tx
                     .send(ServeInfo {
                         src_dir: src_dir.clone(),
+                        theme_dir: theme_dir.clone(),
+                        additional_js: html_config.additional_js.clone(),
+                        additional_css: html_config.additional_css.clone(),
                         file_404: file_404.clone(),
                     })
                     .await

@@ -138,20 +138,13 @@ impl<'a> StatefulHtmlHbs<'a> {
             debug!("Creating print.html ✓");
         }
 
-        debug!("Copy static files");
-        RENDERER
-            .copy_static_files(destination, theme, &html_config)
-            .with_context(|| "Unable to copy across static files")?;
-        RENDERER
-            .copy_additional_css_and_js(&html_config, &ctx.root, destination)
-            .with_context(|| "Unable to copy across additional CSS and JS")?;
-
         // Render search index
         let search = html_config.search.unwrap_or_default();
         if search.enable {
             search::create_files(&search, destination, book)?;
         }
 
+        debug!("Emitting redirects");
         RENDERER
             .emit_redirects(&ctx.destination, handlebars, &html_config.redirect)
             .context("Unable to emit redirects")?;

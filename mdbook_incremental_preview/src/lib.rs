@@ -27,7 +27,7 @@ use mdbook::{
         },
         HtmlHandlebars, RenderContext,
     },
-    theme::Theme,
+    theme::{self, playground_editor, Theme},
     utils::{self, fs::get_404_output_file},
     BookItem, MDBook,
 };
@@ -36,11 +36,12 @@ use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::{
+    select,
     sync::broadcast,
     task::{block_in_place, yield_now, JoinSet},
 };
 use tracing::*;
-use warp::{ws::Message, Filter};
+use warp::{filters::BoxedFilter, reply::with_header, ws::Message, Filter};
 
 pub mod build_book;
 pub mod git_ignore;
@@ -63,8 +64,9 @@ pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<(
     let build_dir = build_temp_dir.path();
     yield_now().await;
 
+    let book_root = env::current_dir()?;
     let serving_url = format!("http://{}", socket_address);
-    info!(?serving_url, ?build_dir, "Will serve");
+    info!(?serving_url, ?book_root, ?build_dir, "Will serve");
 
     let mut join_set = JoinSet::new();
     let (tx, info_tx) = {
@@ -74,8 +76,10 @@ pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<(
 
         // TODO: A watch channel may be better.
         let (info_tx, info_rx) = tokio::sync::mpsc::channel(8);
+        let book_root = book_root.clone();
         let build_dir = build_dir.to_path_buf();
         join_set.spawn(serve_reloading(
+            book_root,
             socket_address,
             build_dir,
             reload_tx,
@@ -85,7 +89,7 @@ pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<(
     };
 
     rebuild_on_change(
-        env::current_dir()?,
+        book_root,
         serving_url,
         build_dir,
         info_tx,
