@@ -41,7 +41,12 @@ use tokio::{
     task::{block_in_place, yield_now, JoinSet},
 };
 use tracing::*;
-use warp::{filters::BoxedFilter, reply::with_header, ws::Message, Filter};
+use warp::{
+    filters::{path::FullPath, BoxedFilter},
+    reply::with_header,
+    ws::Message,
+    Filter,
+};
 
 pub mod build_book;
 pub mod git_ignore;

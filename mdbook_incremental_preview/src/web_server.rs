@@ -14,7 +14,7 @@ pub async fn serve_reloading(
     info!("Starting server with reloading.");
     loop {
         let maybe_maybe_info = select! {
-            _ = serve(&book_root, build_dir.clone(), address, reload_tx.clone(), info.clone()) => None,
+            _ = serve(book_root.clone(), build_dir.clone(), address, reload_tx.clone(), info.clone()) => None,
             maybe_info = info_rx.recv() => Some(maybe_info),
         };
         match maybe_maybe_info {
@@ -46,7 +46,7 @@ const WOFF2_CONTENT_TYPE: &str = "font/woff2";
 const TXT_CONTENT_TYPE: &str = "text/plain";
 
 pub async fn serve(
-    book_root: &Path,
+    book_root: PathBuf,
     build_dir: PathBuf,
     address: SocketAddr,
     reload_tx: broadcast::Sender<Message>,
@@ -193,16 +193,36 @@ pub async fn serve(
 
     // NOTE: Mirror `HtmlHandlebars::copy_additional_css_and_js` but
     // serve them directly instead of copying.
-    let no_copy_additional_css_and_js = additional_js
+    let additional_paths = additional_js
         .iter()
         .chain(&additional_css)
-        .map(|path| {
-            full_path(&format!("{path:?}"))
-                .and(warp::fs::file(book_root.join(path)))
-                .boxed()
+        .map(|path| path.display().to_string())
+        .collect::<HashSet<_>>();
+    debug!(?additional_paths);
+    let no_copy_additional_css_and_js = warp::path::full()
+        .and_then(move |full_path: FullPath| {
+            let is_additional_path =
+                additional_paths.contains(full_path.as_str().trim_start_matches('/'));
+            trace!(?full_path, ?is_additional_path, "Checking additional paths");
+            async move {
+                match is_additional_path {
+                    true => Ok(()),
+                    false => Err(warp::reject::not_found()),
+                }
+            }
         })
-        .reduce(|a, b| a.or(b).unify().boxed())
-        .unwrap_or_else(|| warp::fs::file("does_not_exist").boxed());
+        .untuple_one()
+        .and(warp::fs::dir(book_root));
+
+    let no_copy_files_except_ext = warp::path::full()
+        .and_then(move |full_path: FullPath| async move {
+            match full_path.as_str().ends_with(".md") {
+                true => Err(warp::reject::not_found()),
+                false => Ok(()),
+            }
+        })
+        .untuple_one()
+        .and(warp::fs::dir(src_dir));
 
     // The fallback route for 404 errors
     let fallback_route = warp::fs::file(file_404)
@@ -212,7 +232,7 @@ pub async fn serve(
         .or(no_copy_static_files)
         .or(no_copy_additional_css_and_js)
         // Fall back to the source directory for assets.
-        .or(warp::fs::dir(src_dir))
+        .or(no_copy_files_except_ext)
         .or(fallback_route);
 
     std::panic::set_hook(Box::new(move |panic_info| {
