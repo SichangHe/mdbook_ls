@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.1...mdbook_incremental_preview-v0.0.2) - 2024-06-21
+
+### Added
+- *(avoid copy)* directly serve static files&additional js&css
+- *(reload file watcher)* precisely decide;watch `SUMMARY.md`
+- *(incremental)* non-blocking async `rebuild_on_change`;
+- *(incremental)* async `execute`&`JoinSet` shutdown
+- *(incremental)* avoid copying assets in `src/`
+- *(performance)* write build artifacts to temporary directory
+
+### Fixed
+- *(additional JS/CSS)* correctly serve from files
+
+### Other
+- *(release)* mdbook_fork4ls 0.4.41-patch.1
+- *(server)* separate static file filters
+- *(limitations)* `link` preprocessor does work
+
 ## [0.0.1](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.0...mdbook_incremental_preview-v0.0.1) - 2024-06-20
 
 ### Added
