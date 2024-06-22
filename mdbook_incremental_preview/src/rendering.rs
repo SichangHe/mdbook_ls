@@ -13,7 +13,12 @@ pub const RENDERER: HtmlHandlebars = HtmlHandlebars {};
 pub fn html_config_n_theme_dir_n_theme_n_handlebars(
     ctx: &RenderContext,
 ) -> Result<(HtmlConfig, PathBuf, Theme, Handlebars)> {
-    let html_config = ctx.config.html_config().unwrap_or_default();
+    let html_config = {
+        let mut h = ctx.config.html_config().unwrap_or_default();
+        // NOTE: Inject the JavaScript for live patching.
+        h.additional_js.push(LIVE_PATCH_PATH.into());
+        h
+    };
 
     let theme_dir = match html_config.theme {
         Some(ref theme) => {
@@ -162,11 +167,12 @@ impl<'a> StatefulHtmlHbs<'a> {
     /// any context of other chapters in the book,
     /// so preprocessors that operate across multiple book items, like `link`,
     /// are not supported.
-    pub fn patch<'i, I: IntoIterator<Item = &'i PathBuf>>(
+    pub async fn patch<'i, I: IntoIterator<Item = &'i PathBuf>>(
         &mut self,
         book: &mut MDBook,
         src_dir: &Path,
         paths: I,
+        patch_registry_ref: &mut ActorRef<PatchRegistry>,
     ) -> Result<()> {
         let original_book_preserved = mem::take(&mut book.book);
 
@@ -174,22 +180,47 @@ impl<'a> StatefulHtmlHbs<'a> {
             let Some((ctx, chapter)) = self.path2ctxs.get_mut(path) else {
                 continue;
             };
-            debug!(?path, ?chapter.name, ?ctx.is_index, "patching");
+            let relative_path = path.strip_prefix(src_dir)?;
+            debug!(?path, ?chapter.name, ?ctx.is_index, ?relative_path, "patching");
 
             let content = load_content_of_chapter(path, chapter)?;
-            let relative_path = path.strip_prefix(src_dir)?;
             let chapter = Chapter::new(&chapter.name, content, relative_path, vec![]);
             let mut patcher_book = Book::new();
             patcher_book.sections = vec![BookItem::Chapter(chapter)];
             book.book = patcher_book;
             let (preprocessed_book, _) = book.preprocess_book(&RENDERER)?;
-            let item = preprocessed_book
-                .iter()
-                .next()
-                .with_context(|| format!("{:?} preprocessed to an empty book.", book.book))?;
-            RENDERER.render_item(item, ctx, &mut String::new())?;
+
+            let markdown = match preprocessed_book.iter().next() {
+                None => bail!("{:?} preprocessed to an empty book.", book.book),
+                Some(BookItem::Chapter(Chapter {
+                    content,
+                    source_path: Some(source_path),
+                    ..
+                })) if source_path == relative_path => content,
+                _ => bail!(
+                    "{:?} preprocessed to unexpected {preprocessed_book:?}",
+                    book.book
+                ),
+            };
+            let html = utils::render_markdown(markdown, ctx.html_config.smart_punctuation());
+
+            if ctx.is_index {
+                patch_registry_ref
+                    .cast(PatchRegistryRequest::NewPatch("".into(), html.clone()))
+                    .await
+                    .context("Updating the patch registry")?;
+            }
+            patch_registry_ref
+                .cast(PatchRegistryRequest::NewPatch(
+                    relative_path.with_extension("html"),
+                    html,
+                ))
+                .await
+                .context("Updating the patch registry")?;
         }
 
+        // NOTE: Not restoring if an error occurs,
+        // but would be fine because we would do a full rebuild anyway.
         book.book = original_book_preserved;
         Ok(())
     }

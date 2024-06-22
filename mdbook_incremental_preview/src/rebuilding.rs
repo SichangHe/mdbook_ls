@@ -3,17 +3,18 @@ use super::*;
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/watch/native.rs>.
 
+#[allow(clippy::too_many_arguments)]
 pub async fn rebuild_on_change(
     book_root: PathBuf,
     serving_url: String,
     build_dir: &Path,
-    info_tx: tokio::sync::mpsc::Sender<ServeInfo>,
+    info_tx: mpsc::Sender<ServeInfo>,
+    file_event_tx: mpsc::Sender<Vec<PathBuf>>,
+    mut file_event_rx: mpsc::Receiver<Vec<PathBuf>>,
     mut open_browser: bool,
-    post_build: &dyn Fn(),
+    mut patch_registry_ref: ActorRef<PatchRegistry>,
 ) -> Result<()> {
     let book_toml = book_root.join("book.toml");
-    // Create a channel to receive the events.
-    let (tx, rx) = channel();
 
     let mut _debouncer_to_keep_watcher_alive;
     let (mut render_context, mut theme);
@@ -62,7 +63,10 @@ pub async fn rebuild_on_change(
                 }
                 Err(err) => error!(?err, "failed to load book config"),
             }
-            post_build();
+            patch_registry_ref
+                .cast(PatchRegistryRequest::Clear)
+                .await
+                .context("Clearing the patch registry")?;
         }
         if mem::take(&mut reload_watcher) {
             let new_src_dir = book.source_dir();
@@ -90,6 +94,13 @@ pub async fn rebuild_on_change(
             );
             if src_dir_changed == Some(true) || theme_dir_changed || extra_watch_dirs_changed {
                 info!(?book_root, "Reloading the watcher");
+                let tx = file_event_tx.clone();
+                let event_handler = move |events: Result<Vec<DebouncedEvent>, _>| match events {
+                    Ok(events) => tx
+                        .blocking_send(events.into_iter().map(|event| event.path).collect())
+                        .drop_result(),
+                    Err(err) => error!(?err, "Watching for changes"),
+                };
                 _debouncer_to_keep_watcher_alive = block_in_place(|| {
                     watch_file_changes(
                         &book_root,
@@ -97,7 +108,7 @@ pub async fn rebuild_on_change(
                         &theme_dir,
                         &book_toml,
                         &extra_watch_dirs,
-                        tx.clone(),
+                        event_handler,
                     )
                 });
             }
@@ -153,7 +164,7 @@ pub async fn rebuild_on_change(
             }
         }
         // TODO: Use Tokio channel.
-        let paths = block_in_place(|| recv_changed_paths(&book_root, &maybe_gitignore, &rx));
+        let paths = recv_changed_paths(&book_root, &maybe_gitignore, &mut file_event_rx).await;
         if !paths.is_empty() {
             info!(?paths, "Directories changed");
             (full_rebuild, reload_watcher, reload_server) = match &maybe_gitignore {
@@ -178,8 +189,11 @@ pub async fn rebuild_on_change(
             debug!(full_rebuild, reload_watcher, reload_server);
 
             if !full_rebuild {
-                match block_in_place(|| rendering.patch(&mut book, &src_dir, &paths)) {
-                    Ok(_) => post_build(),
+                match rendering
+                    .patch(&mut book, &src_dir, &paths, &mut patch_registry_ref)
+                    .await
+                {
+                    Ok(_) => debug!("Patched the book"),
                     Err(err) => {
                         error!(?err, "patching the book. Falling back to a full rebuild.");
                         full_rebuild = true;

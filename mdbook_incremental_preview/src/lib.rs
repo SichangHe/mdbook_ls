@@ -7,13 +7,12 @@ use std::{
     iter, mem,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::mpsc::{channel, Receiver},
-    thread::sleep,
+    sync::Arc,
     time::Duration,
 };
 
-use anyhow::{bail, Context};
-use futures_util::{sink::SinkExt, StreamExt};
+use anyhow::{anyhow, bail, Context};
+use futures_util::{sink::SinkExt, FutureExt, StreamExt};
 use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
 use mdbook::{
@@ -37,12 +36,19 @@ use serde_json::json;
 use tempfile::tempdir;
 use tokio::{
     select,
-    sync::broadcast,
+    sync::{mpsc, oneshot, watch},
     task::{block_in_place, yield_now, JoinSet},
+    time::timeout,
 };
+use tokio_gen_server::{actor::ActorRunExt, prelude::*};
+use tokio_util::sync::CancellationToken;
 use tracing::*;
 use warp::{
-    filters::{path::FullPath, BoxedFilter},
+    filters::{
+        path::FullPath,
+        ws::{WebSocket, Ws},
+        BoxedFilter,
+    },
     reply::{with_header, WithHeader},
     ws::Message,
     Filter,
@@ -50,18 +56,22 @@ use warp::{
 
 pub mod build_book;
 pub mod git_ignore;
+pub mod patch_registry;
 pub mod rebuilding;
 pub mod rendering;
 pub mod watch_files;
 pub mod web_server;
 
-use {build_book::*, git_ignore::*, rebuilding::*, rendering::*, watch_files::*, web_server::*};
+use {
+    build_book::*, git_ignore::*, patch_registry::*, rebuilding::*, rendering::*, watch_files::*,
+    web_server::*,
+};
 
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/serve.rs>.
 
 /// The HTTP endpoint for the websocket used to trigger reloads when a file changes.
-const LIVE_RELOAD_ENDPOINT: &str = "__livereload";
+const LIVE_PATCH_WEBSOCKET_PATH: &str = "__mdbook_incremental_preview_live_patch";
 
 // Serve command implementation
 pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
@@ -74,23 +84,43 @@ pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<(
     info!(?serving_url, ?book_root, ?build_dir, "Will serve");
 
     let mut join_set = JoinSet::new();
-    let (tx, info_tx) = {
-        // A channel used to broadcast to any websockets to reload when a file changes.
-        let (tx, _rx) = broadcast::channel::<Message>(100);
-        let reload_tx = tx.clone();
+    let patch_registry_ref = {
+        let registry = PatchRegistry::default();
+        let (msg_sender, msg_receiver) = tokio::sync::mpsc::channel(8);
+        let a_ref = ActorRef::<PatchRegistry> {
+            msg_sender,
+            cancellation_token: CancellationToken::new(),
+        };
+        let env = a_ref.clone();
+        join_set.spawn(
+            registry
+                .run_and_handle_exit(env, msg_receiver)
+                .then(|(_, r)| async {
+                    if let Err(err) = r {
+                        error!(?err, "PatchRegistry exit");
+                    }
+                }),
+        );
+        a_ref
+    };
 
+    let (file_event_tx, file_event_rx) = mpsc::channel(64);
+    let info_tx = {
         // TODO: A watch channel may be better.
-        let (info_tx, info_rx) = tokio::sync::mpsc::channel(8);
+        let (info_tx, info_rx) = mpsc::channel(8);
         let book_root = book_root.clone();
         let build_dir = build_dir.to_path_buf();
+        let file_event_tx = file_event_tx.clone();
+        let patch_registry_ref = patch_registry_ref.clone();
         join_set.spawn(serve_reloading(
             book_root,
             socket_address,
             build_dir,
-            reload_tx,
+            file_event_tx,
             info_rx,
+            patch_registry_ref,
         ));
-        (tx, info_tx)
+        info_tx
     };
 
     rebuild_on_change(
@@ -98,10 +128,10 @@ pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<(
         serving_url,
         build_dir,
         info_tx,
+        file_event_tx,
+        file_event_rx,
         open_browser,
-        &move || {
-            let _ = tx.send(Message::text("reload"));
-        },
+        patch_registry_ref,
     )
     .await?;
 
@@ -118,4 +148,15 @@ fn open<P: AsRef<OsStr>>(path: P) {
             info!("Opened web browser.")
         }
     }
+}
+
+pub trait DropResult {
+    /// Drop this `Result` as an alternative to calling `_ =` which
+    /// may accidentally ignore e.g. a `Future`.
+    /// This is especially useful when sending a message through a channel.
+    fn drop_result(self);
+}
+
+impl<T, E> DropResult for Result<T, E> {
+    fn drop_result(self) {}
 }

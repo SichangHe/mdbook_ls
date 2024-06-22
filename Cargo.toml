@@ -24,7 +24,9 @@ pathdiff = "0.2"
 regex = "1"
 serde_json = "1"
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio_gen_server = "0.4"
+tokio-util = "0.7"
 toml = "=0.5.11" # Do not update, see https://github.com/rust-lang/mdBook/issues/2037
 tracing = { version = "0.1", default_features = false }
 tracing-subscriber = { version = "0.3", default_features = false, features = [

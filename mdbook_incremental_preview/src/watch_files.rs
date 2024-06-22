@@ -54,28 +54,25 @@ where
 
 const EVENT_RECEIVE_TIMEOUT: Duration = Duration::from_millis(50);
 
-pub fn recv_changed_paths<P: AsRef<Path>>(
+pub async fn recv_changed_paths<P: AsRef<Path>>(
     book_root: P,
     maybe_gitignore: &Option<(Gitignore, PathBuf)>,
-    rx: &Receiver<notify::Result<Vec<DebouncedEvent>>>,
+    rx: &mut mpsc::Receiver<Vec<PathBuf>>,
 ) -> HashSet<PathBuf> {
     let book_root = book_root.as_ref();
-    let first_event = rx.recv().unwrap();
-    sleep(EVENT_RECEIVE_TIMEOUT);
-    let other_events = rx.try_iter();
+    let first_event = rx.recv().await.unwrap();
+    let mut other_events = Vec::with_capacity(rx.len() * 2);
+    timeout(
+        EVENT_RECEIVE_TIMEOUT,
+        rx.recv_many(&mut other_events, usize::MAX),
+    )
+    .await
+    .drop_result();
 
     std::iter::once(first_event)
         .chain(other_events)
-        .filter_map(|maybe_events| match maybe_events {
-            Ok(events) => Some(events),
-            Err(err) => {
-                warn!(?err, "Watching for changes");
-                None
-            }
-        })
         .flatten()
-        .filter_map(|event| {
-            let path = event.path;
+        .filter_map(|path| {
             // If we are watching files outside the current repository (via extra-watch-dirs), then they are definitionally
             // ignored by gitignore. So we handle this case by including such files into the watched paths list.
             match path.starts_with(book_root) {

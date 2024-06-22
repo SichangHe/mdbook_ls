@@ -4,8 +4,9 @@ pub async fn serve_reloading(
     book_root: PathBuf,
     address: SocketAddr,
     build_dir: PathBuf,
-    reload_tx: broadcast::Sender<Message>,
-    mut info_rx: tokio::sync::mpsc::Receiver<ServeInfo>,
+    file_event_tx: mpsc::Sender<Vec<PathBuf>>,
+    mut info_rx: mpsc::Receiver<ServeInfo>,
+    patch_registry_ref: ActorRef<PatchRegistry>,
 ) {
     let Some(mut info) = info_rx.recv().await else {
         error!("Did not start server because all info senders have been dropped.");
@@ -14,7 +15,7 @@ pub async fn serve_reloading(
     info!("Starting server with reloading.");
     loop {
         let maybe_maybe_info = select! {
-            _ = serve(book_root.clone(), build_dir.clone(), address, reload_tx.clone(), info.clone()) => None,
+            _ = serve(book_root.clone(), build_dir.clone(), address, file_event_tx.clone(), info.clone(), patch_registry_ref.clone()) => None,
             maybe_info = info_rx.recv() => Some(maybe_info),
         };
         match maybe_maybe_info {
@@ -41,8 +42,9 @@ pub async fn serve(
     book_root: PathBuf,
     build_dir: PathBuf,
     address: SocketAddr,
-    reload_tx: broadcast::Sender<Message>,
+    file_event_tx: mpsc::Sender<Vec<PathBuf>>,
     info: ServeInfo,
+    patch_registry_ref: ActorRef<PatchRegistry>,
 ) {
     let ServeInfo {
         src_dir,
@@ -52,29 +54,36 @@ pub async fn serve(
         file_404,
     } = info;
 
-    // A warp Filter which captures `reload_tx` and provides an `rx` copy to
-    // receive reload messages.
-    let sender = warp::any().map(move || reload_tx.subscribe());
-
-    // A warp Filter to handle the livereload endpoint. This upgrades to a
-    // websocket, and then waits for any filesystem change notifications, and
-    // relays them over the websocket.
-    let livereload = warp::path(LIVE_RELOAD_ENDPOINT)
+    // Handle WebSockets for live-patching.
+    let p_ref = patch_registry_ref.clone();
+    let live_patch = warp::path(LIVE_PATCH_WEBSOCKET_PATH)
         .and(warp::ws())
-        .and(sender)
-        .map(|ws: warp::ws::Ws, mut rx: broadcast::Receiver<Message>| {
-            ws.on_upgrade(move |ws| async move {
-                let (mut user_ws_tx, _user_ws_rx) = ws.split();
-                trace!("websocket got connection");
-                if let Ok(m) = rx.recv().await {
-                    trace!("notify of reload");
-                    let _ = user_ws_tx.send(m).await;
+        .and(warp::any().map(move || p_ref.clone()))
+        .map(move |ws: Ws, patch_registry_ref| {
+            ws.on_upgrade(move |mut ws| async move {
+                if let Err(err) = handle_ws(&mut ws, patch_registry_ref).await {
+                    error!(?err, "Handling websocket");
                 }
+                ws.close().await.drop_result();
+                debug!("Closed websocket connection.");
             })
         });
 
-    // Serve artifacts in the build directory.
-    let book_route = warp::fs::dir(build_dir.clone());
+    let summary_md = Arc::new(src_dir.join("SUMMARY.md"));
+    let build_artifact = warp::get()
+        // Check if the path has a patch.
+        .and(warp::path::full())
+        .and(warp::get().map(move || {
+            (
+                patch_registry_ref.clone(),
+                file_event_tx.clone(),
+                summary_md.clone(),
+            )
+        }))
+        .and_then(filter_patched_path)
+        .untuple_one()
+        .and(warp::fs::dir(build_dir.clone()));
+
     let no_copy_static_files = warp::fs::dir(theme_dir).or(static_files_filter());
     let no_copy_additional_css_and_js =
         additional_js_css_filter(book_root, &additional_js, &additional_css);
@@ -92,8 +101,8 @@ pub async fn serve(
     // The fallback route for 404 errors
     let fallback_route = warp::fs::file(file_404)
         .map(|reply| warp::reply::with_status(reply, warp::http::StatusCode::NOT_FOUND));
-    let routes = livereload
-        .or(book_route)
+    let routes = live_patch
+        .or(build_artifact)
         .or(no_copy_static_files)
         .or(no_copy_additional_css_and_js)
         // Fall back to the source directory for assets.
@@ -109,6 +118,78 @@ pub async fn serve(
     warp::serve(routes).run(address).await;
 }
 
+async fn handle_ws(
+    ws: &mut WebSocket,
+    mut patch_registry_ref: ActorRef<PatchRegistry>,
+) -> Result<()> {
+    let path = recv_path(ws)
+        .await
+        .context("Receiving path from websocket")?;
+    debug!(?path, "Websocket connection.");
+
+    let response = patch_registry_ref
+        .call(PatchRegistryQuery::Watch(path.clone()))
+        .await;
+    let Ok(PatchRegistryResponse::WatchReceiver(mut watch_receiver)) = response else {
+        bail!("Unexpected response calling PatchRegistry: {response:?}.");
+    };
+
+    while watch_receiver.changed().await.is_ok() {
+        let patch = { watch_receiver.borrow_and_update().clone() };
+        ws.send(Message::text(patch))
+            .await
+            .with_context(|| format!("Sending patch update to websocket at {path:?}."))?;
+        debug!("Sent patch update to websocket at {path:?}.");
+    }
+    // The patch sender is dropped, signaling a full rebuild.
+    Ok(())
+}
+
+async fn recv_path(ws: &mut WebSocket) -> Result<PathBuf> {
+    let msg = ws
+        .next()
+        .await
+        .context("Failed to receive path from websocket")?
+        .context("Receive path from websocket")?;
+    let msg_str = msg
+        .to_str()
+        .map_err(|_| anyhow!("Websocket message is not a string: {msg:?}"))?;
+    msg_str
+        .trim_start_matches('/')
+        .parse()
+        .with_context(|| format!("String from websocket is not a valid path: {msg_str}"))
+}
+
+async fn filter_patched_path(
+    full_path: FullPath,
+    (mut patch_registry_ref, file_event_tx, summary_md): (
+        ActorRef<PatchRegistry>,
+        mpsc::Sender<Vec<PathBuf>>,
+        Arc<PathBuf>,
+    ),
+) -> Result<(), warp::reject::Rejection> {
+    let path = full_path.as_str().trim_start_matches('/');
+    match patch_registry_ref
+        .call(PatchRegistryQuery::GetPatch(path.into()))
+        .await
+    {
+        Ok(PatchRegistryResponse::PatchContent(maybe_patch)) => {
+            if maybe_patch.is_some() {
+                debug!(
+                    path,
+                    "Client requested patched path. Issuing a full rebuild."
+                );
+                file_event_tx
+                    .send(vec![summary_md.to_path_buf()])
+                    .await
+                    .drop_result();
+            }
+        }
+        response => error!(?response, "Unexpected response calling PatchRegistry"),
+    }
+    Ok(())
+}
+
 const CONTENT_TYPE: &str = "Content-Type";
 const JS_CONTENT_TYPE: &str = "application/javascript";
 const CSS_CONTENT_TYPE: &str = "text/css";
@@ -117,8 +198,14 @@ const SVG_CONTENT_TYPE: &str = "image/svg+xml";
 const WOFF2_CONTENT_TYPE: &str = "font/woff2";
 const TXT_CONTENT_TYPE: &str = "text/plain";
 
+/// URL path to the JavaScript for live patching.
+pub const LIVE_PATCH_PATH: &str = "__mdbook_incremental_preview/websocket_live_patch.js";
+const LIVE_PATCH_JS: &[u8] = include_bytes!("websocket_live_patch.js");
+
 /// Mirror the content and order in `HtmlHandlebars::copy_static_files` but
 /// serve them directly instead of copying.
+///
+/// Additionally, serves the JavaScript for live patching.
 ///
 /// `.nojekyll` and `CNAME` are not included.
 pub fn static_files_filter() -> BoxedFilter<(WithHeader<&'static [u8]>,)> {
@@ -193,6 +280,8 @@ pub fn static_files_filter() -> BoxedFilter<(WithHeader<&'static [u8]>,)> {
                     "theme-tomorrow_night.js",
                     (playground_editor::THEME_TOMORROW_NIGHT_JS, JS_CONTENT_TYPE),
                 ),
+                // JavaScript for live patching.
+                (LIVE_PATCH_PATH, (LIVE_PATCH_JS, JS_CONTENT_TYPE)),
             ]
             .into_iter()
             // Other fallback fonts.
