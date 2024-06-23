@@ -1,10 +1,12 @@
 use std::io::stderr;
 
 use clap::Parser;
+use mdbook_ls::run;
 use tracing::*;
 use tracing_subscriber::EnvFilter;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     tracing_subscriber::fmt()
         .with_ansi(true)
         .with_writer(stderr)
@@ -12,6 +14,7 @@ fn main() {
         .init();
     let app = App::parse();
     debug!(?app);
+    run().await;
 }
 
 #[derive(Clone, Debug, Parser)]

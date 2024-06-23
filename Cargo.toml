@@ -28,6 +28,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tokio_gen_server = "0.4"
 tokio-util = "0.7"
 toml = "=0.5.11" # Do not update, see https://github.com/rust-lang/mdBook/issues/2037
+tower-lsp = "0.20"
 tracing = { version = "0.1", default_features = false }
 tracing-subscriber = { version = "0.3", default_features = false, features = [
     "ansi",
@@ -48,9 +49,20 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
+clap = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["io-std"] }
+tower-lsp.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+
+[features]
+build-binary = ["dep:clap"]
+
+[[bin]]
+name = "mdbook-ls"
+path = "src/main.rs"
+required-features = ["build-binary"]
 
 [profile.release]
 lto = true
