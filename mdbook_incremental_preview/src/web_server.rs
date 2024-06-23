@@ -57,15 +57,16 @@ pub async fn serve(
     // Handle WebSockets for live-patching.
     let p_ref = patch_registry_ref.clone();
     let live_patch = warp::path(LIVE_PATCH_WEBSOCKET_PATH)
+        .and(warp::path::tail())
         .and(warp::ws())
         .and(warp::any().map(move || p_ref.clone()))
-        .map(move |ws: Ws, patch_registry_ref| {
+        .map(move |tail: Tail, ws: Ws, patch_registry_ref| {
             ws.on_upgrade(move |mut ws| async move {
-                if let Err(err) = handle_ws(&mut ws, patch_registry_ref).await {
-                    error!(?err, "Handling websocket");
+                if let Err(err) = handle_ws(tail.as_str(), &mut ws, patch_registry_ref).await {
+                    error!(?err, "Handling WebSocket");
                 }
                 ws.close().await.drop_result();
-                debug!("Closed websocket connection.");
+                debug!("Closed WebSocket connection.");
             })
         });
 
@@ -118,17 +119,18 @@ pub async fn serve(
     warp::serve(routes).run(address).await;
 }
 
+/// Handle live patching at the canonical `path` that may start with `/`,
+/// via the WebSocket `ws`.
 async fn handle_ws(
+    path: &str,
     ws: &mut WebSocket,
     mut patch_registry_ref: ActorRef<PatchRegistry>,
 ) -> Result<()> {
-    let path = recv_path(ws)
-        .await
-        .context("Receiving path from websocket")?;
-    debug!(?path, "Websocket connection.");
+    let path = Path::new(path.trim_start_matches('/'));
+    info!(?path, "WebSocket connection.");
 
     let response = patch_registry_ref
-        .call(PatchRegistryQuery::Watch(path.clone()))
+        .call(PatchRegistryQuery::Watch(path.to_owned()))
         .await;
     let Ok(PatchRegistryResponse::WatchReceiver(mut watch_receiver)) = response else {
         bail!("Unexpected response calling PatchRegistry: {response:?}.");
@@ -138,26 +140,11 @@ async fn handle_ws(
         let patch = { watch_receiver.borrow_and_update().clone() };
         ws.send(Message::text(patch))
             .await
-            .with_context(|| format!("Sending patch update to websocket at {path:?}."))?;
-        debug!("Sent patch update to websocket at {path:?}.");
+            .with_context(|| format!("Sending patch update to WebSocket at {path:?}."))?;
+        debug!("Sent patch update to WebSocket at {path:?}.");
     }
     // The patch sender is dropped, signaling a full rebuild.
     Ok(())
-}
-
-async fn recv_path(ws: &mut WebSocket) -> Result<PathBuf> {
-    let msg = ws
-        .next()
-        .await
-        .context("Failed to receive path from websocket")?
-        .context("Receive path from websocket")?;
-    let msg_str = msg
-        .to_str()
-        .map_err(|_| anyhow!("Websocket message is not a string: {msg:?}"))?;
-    msg_str
-        .trim_start_matches('/')
-        .parse()
-        .with_context(|| format!("String from websocket is not a valid path: {msg_str}"))
 }
 
 async fn filter_patched_path(
@@ -288,13 +275,13 @@ pub fn static_files_filter() -> BoxedFilter<(WithHeader<&'static [u8]>,)> {
             .chain(
                 theme::fonts::LICENSES
                     .into_iter()
-                    .map(|(path, contents)| (path, (contents, TXT_CONTENT_TYPE))),
+                    .map(|(path, content)| (path, (content, TXT_CONTENT_TYPE))),
             )
             .chain(
                 theme::fonts::OPEN_SANS
                     .into_iter()
                     .chain(iter::once(theme::fonts::SOURCE_CODE_PRO))
-                    .map(|(path, contents)| (path, (contents, WOFF2_CONTENT_TYPE))),
+                    .map(|(path, content)| (path, (content, WOFF2_CONTENT_TYPE))),
             ),
         );
 

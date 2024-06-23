@@ -11,8 +11,8 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context};
-use futures_util::{sink::SinkExt, FutureExt, StreamExt};
+use anyhow::{bail, Context};
+use futures_util::{sink::SinkExt, FutureExt};
 use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
 use mdbook::{
@@ -45,7 +45,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::*;
 use warp::{
     filters::{
-        path::FullPath,
+        path::{FullPath, Tail},
         ws::{WebSocket, Ws},
         BoxedFilter,
     },
@@ -70,7 +70,7 @@ use {
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/serve.rs>.
 
-/// The HTTP endpoint for the websocket used to trigger reloads when a file changes.
+/// The HTTP endpoint for the WebSocket used to trigger reloads when a file changes.
 const LIVE_PATCH_WEBSOCKET_PATH: &str = "__mdbook_incremental_preview_live_patch";
 
 // Serve command implementation
