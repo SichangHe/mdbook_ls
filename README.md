@@ -6,11 +6,11 @@ preview mdBook projects live.
 
 ## mdBook Incremental Preview
 
-mdBook_Incremental_Preview provides incremental preview building for
+mdBook-Incremental-Preview provides incremental preview building for
 mdBook projects.
 Unlike `mdbook watch` or `mdbook serve`,
 which are inefficient because they rebuild the whole book on file changes,
-`mdBook_incremental_preview` only patches the changed chapters,
+`mdBook-incremental-preview` only patches the changed chapters,
 thus producing instant updates.
 
 ### Usage of mdBook Incremental Preview
@@ -18,14 +18,15 @@ thus producing instant updates.
 At your project root, run:
 
 ```sh
-mdbook_incremental_preview
+mdbook-incremental-preview
 ```
 
 It has basically the same functionality as `mdbook serve` but incremental:
 
 - Chapter changes are patched individually and pushed to browser.
 - Full rebuilds happen only when the `.gitignore`, `book.toml`, `SUMMARY.md`,
-    or the theme directory changes.
+    or the theme directory changes,
+    or a patched page is requested by a new client.
     <!-- NOTE: We need to rebuild on theme changes because of templates. -->
 - Build artifacts are stored in a temporary directory in memory.
 - It directly serves static files, additional JS & CSS,
@@ -43,7 +44,7 @@ our injected script issues a [`load` window event][load-event].
 You should listen to this event to rerun any JavaScript code as needed.
 An example is below in [the MathJax support section](#mathjax-support).
 
-### Incremental preview current limitations
+### Current limitations of patching
 
 - Preprocessors that operate across multiple book item are not supported.
     The results may be incorrect,
@@ -78,7 +79,6 @@ document.addEventListener("load", () => {
 
 ### Future work for incremental preview
 
-- Do a full rebuild on manual page refresh.
 - Background search indexing to save full rebuild time.
 
 ## Debugging

@@ -13,6 +13,7 @@ pub async fn serve_reloading(
         return;
     };
     info!("Starting server with reloading.");
+    let mut info_buf = Vec::new();
     loop {
         let maybe_maybe_info = select! {
             _ = serve(book_root.clone(), build_dir.clone(), address, file_event_tx.clone(), info.clone(), patch_registry_ref.clone()) => None,
@@ -24,7 +25,14 @@ pub async fn serve_reloading(
                 info!("Stopping server reloading because all info senders have been dropped.");
                 return;
             }
-            Some(Some(new_info)) => info = new_info,
+            Some(Some(new_info)) => {
+                // Consume all the info in the channel.
+                timeout(Duration::ZERO, info_rx.recv_many(&mut info_buf, usize::MAX))
+                    .await
+                    .drop_result();
+                info = info_buf.pop().unwrap_or(new_info);
+                info_buf.clear();
+            }
         }
     }
 }
@@ -157,11 +165,11 @@ async fn filter_patched_path(
 ) -> Result<(), warp::reject::Rejection> {
     let path = full_path.as_str().trim_start_matches('/');
     match patch_registry_ref
-        .call(PatchRegistryQuery::GetPatch(path.into()))
+        .call(PatchRegistryQuery::GetHasPatch(path.into()))
         .await
     {
-        Ok(PatchRegistryResponse::PatchContent(maybe_patch)) => {
-            if maybe_patch.is_some() {
+        Ok(PatchRegistryResponse::HasPatch(has_patch)) => {
+            if has_patch {
                 debug!(
                     path,
                     "Client requested patched path. Issuing a full rebuild."

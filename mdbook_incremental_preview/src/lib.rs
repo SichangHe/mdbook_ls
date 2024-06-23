@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    env,
     ffi::OsStr,
     fs::{self, File},
     io::{self, Read},
@@ -73,20 +72,24 @@ use {
 /// The HTTP endpoint for the WebSocket used to trigger reloads when a file changes.
 const LIVE_PATCH_WEBSOCKET_PATH: &str = "__mdbook_incremental_preview_live_patch";
 
-// Serve command implementation
-pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<()> {
+// Serve the book at absolute path `book_root` at the given `socket_address`,
+// and patch it live continuously.
+pub async fn live_patch_continuously(
+    book_root: PathBuf,
+    socket_address: SocketAddr,
+    open_browser: bool,
+) -> Result<()> {
     let build_temp_dir = tempdir()?; // Do not drop; preserve the temporary directory.
     let build_dir = build_temp_dir.path();
     yield_now().await;
 
-    let book_root = env::current_dir()?;
     let serving_url = format!("http://{}", socket_address);
     info!(?serving_url, ?book_root, ?build_dir, "Will serve");
 
     let mut join_set = JoinSet::new();
     let patch_registry_ref = {
         let registry = PatchRegistry::default();
-        let (msg_sender, msg_receiver) = tokio::sync::mpsc::channel(8);
+        let (msg_sender, msg_receiver) = mpsc::channel(8);
         let a_ref = ActorRef::<PatchRegistry> {
             msg_sender,
             cancellation_token: CancellationToken::new(),
@@ -106,7 +109,6 @@ pub async fn execute(socket_address: SocketAddr, open_browser: bool) -> Result<(
 
     let (file_event_tx, file_event_rx) = mpsc::channel(64);
     let info_tx = {
-        // TODO: A watch channel may be better.
         let (info_tx, info_rx) = mpsc::channel(8);
         let book_root = book_root.clone();
         let build_dir = build_dir.to_path_buf();

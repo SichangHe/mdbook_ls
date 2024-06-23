@@ -163,7 +163,6 @@ pub async fn rebuild_on_change(
                 }
             }
         }
-        // TODO: Use Tokio channel.
         let paths = recv_changed_paths(&book_root, &maybe_gitignore, &mut file_event_rx).await;
         if !paths.is_empty() {
             info!(?paths, "Directories changed");

@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+clap = { workspace = true, optional = true }
 futures-util.workspace = true
 handlebars.workspace = true
 ignore.workspace = true
@@ -27,3 +28,11 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 warp.workspace = true
+
+[features]
+build-binary = ["dep:clap"]
+
+[[bin]]
+name = "mdbook-incremental-preview"
+path = "src/main.rs"
+required-features = ["build-binary"]

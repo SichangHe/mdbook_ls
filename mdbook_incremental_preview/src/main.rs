@@ -1,7 +1,8 @@
-use std::io::stderr;
+use clap::Parser;
+use std::{io::stderr, net::IpAddr, path::PathBuf};
 
-use anyhow::*;
-use mdbook_incremental_preview::execute;
+use anyhow::Result;
+use mdbook_incremental_preview::live_patch_continuously;
 use tracing::*;
 use tracing_subscriber::EnvFilter;
 
@@ -14,9 +15,31 @@ async fn main() -> Result<()> {
         .init();
     debug!("Starting");
 
-    // TODO: Currently hardcoded.
-    let socket_address = "127.0.0.1:3000".parse()?;
-    let open_browser = true;
+    let args = Args::parse();
+    let book_root = args.dir.canonicalize()?;
+    let socket_address = (args.hostname, args.port).into();
+    live_patch_continuously(book_root, socket_address, args.open).await
+}
 
-    execute(socket_address, open_browser).await
+#[derive(Parser)]
+#[command(
+    about = "Serves an mdBook project and live patch it on changes.",
+    version
+)]
+struct Args {
+    /// Root directory for the book (Defaults to the current directory when omitted)
+    #[arg(default_value = ".")]
+    dir: PathBuf,
+
+    /// Hostname to listen on for HTTP connections
+    #[arg(short = 'n', long, default_value = "127.0.0.1")]
+    hostname: IpAddr,
+
+    /// Port to use for HTTP connections
+    #[arg(short, long, default_value_t = 3000)]
+    port: u16,
+
+    /// Opens the compiled book in a web browser
+    #[arg(short, long, default_value_t = true)]
+    open: bool,
 }

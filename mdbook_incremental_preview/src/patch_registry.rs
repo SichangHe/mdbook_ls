@@ -16,13 +16,17 @@ impl Actor for PatchRegistry {
     async fn handle_cast(&mut self, msg: Self::T, _env: &mut ActorRef<Self>) -> Result<()> {
         match msg {
             PatchRegistryRequest::NewPatch(path, patch) => {
-                debug!(?path, "Updating patch in registry.");
+                debug!(?path, "Registry received patch.");
                 match self.patches.entry(path) {
                     // Entry exists,
                     // update the patch in-place and send watch updates.
                     Entry::Occupied(mut entry) => {
                         let sender = entry.get_mut();
-                        sender.send_modify(|old_patch| *old_patch = patch);
+                        // Update the patch only if it changed.
+                        if *sender.borrow() != patch {
+                            debug!("Updating patch in registry.");
+                            sender.send_modify(|old_patch| *old_patch = patch);
+                        }
                     }
                     // New entry, register the patch and a new watch channel.
                     Entry::Vacant(entry) => _ = entry.insert(watch::channel(patch).0),
@@ -53,13 +57,10 @@ impl Actor for PatchRegistry {
                     .send(PatchRegistryResponse::WatchReceiver(watch_receiver))
                     .drop_result();
             }
-            PatchRegistryQuery::GetPatch(path) => {
-                let maybe_patch = self
-                    .patches
-                    .get(&path)
-                    .map(|sender| sender.borrow().clone());
+            PatchRegistryQuery::GetHasPatch(path) => {
+                let has_patch = self.patches.contains_key(&path);
                 response_sender
-                    .send(PatchRegistryResponse::PatchContent(maybe_patch))
+                    .send(PatchRegistryResponse::HasPatch(has_patch))
                     .drop_result();
             }
         }
@@ -81,8 +82,8 @@ pub enum PatchRegistryRequest {
 pub enum PatchRegistryQuery {
     /// Watch a path for changes.
     Watch(PathBuf),
-    /// Get the patch for a path.
-    GetPatch(PathBuf),
+    /// Get if a path has patches.
+    GetHasPatch(PathBuf),
 }
 
 /// A response from patch registry.
@@ -90,7 +91,6 @@ pub enum PatchRegistryQuery {
 pub enum PatchRegistryResponse {
     /// Receiver to watch for patches.
     WatchReceiver(watch::Receiver<String>),
-    /// Patch content for query.
-    // TODO: The content seems redundant.
-    PatchContent(Option<String>),
+    /// If a path has patches.
+    HasPatch(bool),
 }
