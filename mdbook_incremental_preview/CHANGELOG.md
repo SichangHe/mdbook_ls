@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.2...mdbook_incremental_preview-v0.0.3) - 2024-06-23
+
+### Added
+- feat!(mdbook-incremental-preview): binary take arguments;rename;
+- *(live patch)* issues `load` window event on patch
+- *(live patch)* only replace `<main>`;rebuild on requesting patched page;
+
+### Other
+- *(clean up)* WebSocket connect on path to chapter,
+
 ## [0.0.2](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.1...mdbook_incremental_preview-v0.0.2) - 2024-06-21
 
 ### Added
