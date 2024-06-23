@@ -146,9 +146,14 @@ async fn handle_ws(
 
     while watch_receiver.changed().await.is_ok() {
         let patch = { watch_receiver.borrow_and_update().clone() };
-        ws.send(Message::text(patch))
-            .await
-            .with_context(|| format!("Sending patch update to WebSocket at {path:?}."))?;
+        if let Err(err) = ws.send(Message::text(patch)).await {
+            info!(
+                ?err,
+                ?path,
+                "Patch update did not deliver. Closing WebSocket."
+            );
+            break;
+        }
         debug!("Sent patch update to WebSocket at {path:?}.");
     }
     // The patch sender is dropped, signaling a full rebuild.
