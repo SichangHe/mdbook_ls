@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::{bail, Context};
+use drop_this::*;
 use futures_util::{sink::SinkExt, FutureExt};
 use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
@@ -150,15 +151,4 @@ fn open<P: AsRef<OsStr>>(path: P) {
             info!("Opened web browser.")
         }
     }
-}
-
-pub trait DropResult {
-    /// Drop this `Result` as an alternative to calling `_ =` which
-    /// may accidentally ignore e.g. a `Future`.
-    /// This is especially useful when sending a message through a channel.
-    fn drop_result(self);
-}
-
-impl<T, E> DropResult for Result<T, E> {
-    fn drop_result(self) {}
 }

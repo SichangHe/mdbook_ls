@@ -1,20 +1,20 @@
 use std::io::stderr;
 
 use clap::Parser;
-use mdbook_ls::run;
+use mdbook_ls::run_mdbook_ls;
 use tracing::*;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
-        .with_ansi(true)
+        .with_ansi(false)
         .with_writer(stderr)
         .with_env_filter(EnvFilter::from_default_env())
         .init();
     let app = App::parse();
     debug!(?app);
-    run().await;
+    run_mdbook_ls().await;
 }
 
 #[derive(Clone, Debug, Parser)]

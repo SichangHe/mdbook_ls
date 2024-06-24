@@ -132,7 +132,7 @@ pub async fn serve(
 async fn handle_ws(
     path: &str,
     ws: &mut WebSocket,
-    mut patch_registry_ref: ActorRef<PatchRegistry>,
+    patch_registry_ref: ActorRef<PatchRegistry>,
 ) -> Result<()> {
     let path = Path::new(path.trim_start_matches('/'));
     info!(?path, "WebSocket connection.");
@@ -162,7 +162,7 @@ async fn handle_ws(
 
 async fn filter_patched_path(
     full_path: FullPath,
-    (mut patch_registry_ref, file_event_tx, summary_md): (
+    (patch_registry_ref, file_event_tx, summary_md): (
         ActorRef<PatchRegistry>,
         mpsc::Sender<Vec<PathBuf>>,
         Arc<PathBuf>,

@@ -1,55 +1,26 @@
-use tokio::io::{stdin, stdout};
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use std::path::PathBuf;
+
+use anyhow::Result;
+use drop_this::*;
+use serde_json::Value;
+use tokio::{
+    io::{stdin, stdout},
+    spawn,
+    sync::mpsc,
+    task::JoinSet,
+};
+use tokio_gen_server::prelude::*;
+use tower_lsp::{LspService, Server};
 use tracing::*;
 
-pub async fn run() {
+pub mod live_patching;
+pub mod lsp;
+
+use {live_patching::*, lsp::*};
+
+pub async fn run_mdbook_ls() {
     let (stdin, stdout) = (stdin(), stdout());
-    let (service, socket) = LspService::new(|client| MDBookLS { client });
+    let (service, socket) = LspService::new(MDBookLS::new);
     info!(?socket, "Starting mdBook-LS");
     Server::new(stdin, stdout, socket).serve(service).await;
-}
-
-#[derive(Debug)]
-pub struct MDBookLS {
-    pub client: Client,
-}
-
-#[tower_lsp::async_trait]
-impl LanguageServer for MDBookLS {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
-        Ok(InitializeResult {
-            capabilities: ServerCapabilities {
-                hover_provider: Some(HoverProviderCapability::Simple(true)),
-                completion_provider: Some(CompletionOptions::default()),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-    }
-
-    async fn initialized(&self, _: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "server initialized!")
-            .await;
-    }
-
-    async fn shutdown(&self) -> Result<()> {
-        Ok(())
-    }
-
-    async fn completion(&self, _: CompletionParams) -> Result<Option<CompletionResponse>> {
-        Ok(Some(CompletionResponse::Array(vec![
-            CompletionItem::new_simple("Hello".to_string(), "Some detail".to_string()),
-            CompletionItem::new_simple("Bye".to_string(), "More detail".to_string()),
-        ])))
-    }
-
-    async fn hover(&self, _: HoverParams) -> Result<Option<Hover>> {
-        Ok(Some(Hover {
-            contents: HoverContents::Scalar(MarkedString::String("You're hovering!".to_string())),
-            range: None,
-        }))
-    }
 }
