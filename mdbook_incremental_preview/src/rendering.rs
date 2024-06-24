@@ -21,7 +21,7 @@ pub const RENDERER: HtmlHandlebars = HtmlHandlebars {};
 
 pub fn html_config_n_theme_dir_n_theme_n_handlebars(
     ctx: &RenderContext,
-) -> Result<(HtmlConfig, PathBuf, Theme, Handlebars)> {
+) -> Result<(HtmlConfig, PathBuf, Theme, Handlebars<'static>)> {
     let html_config = {
         let mut h = ctx.config.html_config().unwrap_or_default();
         // NOTE: Inject the JavaScript for live patching.
@@ -211,6 +211,7 @@ impl HtmlHbsState {
     ) -> Result<()> {
         let original_book_preserved = mem::take(&mut book.book);
 
+        // TODO: Parallelize.
         for path in paths.into_iter() {
             let Some(CtxCore {
                 chapter_name,
