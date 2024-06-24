@@ -56,7 +56,10 @@ pub async fn rebuild_on_change(
                         "rebuilt the book"
                     );
                     patch_registry_ref
-                        .cast(PatchRegistryRequest::Clear(hbs_state.index_path.clone()))
+                        .cast(PatchRegistryRequest::Clear {
+                            index_path: hbs_state.index_path.clone(),
+                            smart_punctuation: hbs_state.smart_punctuation,
+                        })
                         .await
                         .context("Clearing the patch registry")?;
                 }

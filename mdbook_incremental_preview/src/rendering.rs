@@ -227,9 +227,9 @@ impl HtmlHbsState {
             let mut patcher_book = Book::new();
             patcher_book.sections = vec![BookItem::Chapter(chapter)];
             book.book = patcher_book;
-            let (preprocessed_book, _) = block_in_place(|| book.preprocess_book(&RENDERER))?;
+            let (mut preprocessed_book, _) = block_in_place(|| book.preprocess_book(&RENDERER))?;
 
-            let markdown = match preprocessed_book.iter().next() {
+            let markdown = match preprocessed_book.sections.pop() {
                 None => bail!("{:?} preprocessed to an empty book.", book.book),
                 Some(BookItem::Chapter(Chapter {
                     content,
@@ -241,12 +241,10 @@ impl HtmlHbsState {
                     book.book
                 ),
             };
-            let html = block_in_place(|| utils::render_markdown(markdown, self.smart_punctuation));
-
             patch_registry_ref
                 .cast(PatchRegistryRequest::NewPatch(
                     relative_path.with_extension("html"),
-                    html,
+                    markdown,
                 ))
                 .await
                 .context("Updating the patch registry")?;

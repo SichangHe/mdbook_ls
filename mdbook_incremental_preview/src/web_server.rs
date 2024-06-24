@@ -144,6 +144,7 @@ async fn handle_ws(
         bail!("Unexpected response calling PatchRegistry: {response:?}.");
     };
 
+    // TODO: Handle the case where a prior patch exists.
     while watch_receiver.changed().await.is_ok() {
         let patch = { watch_receiver.borrow_and_update().clone() };
         if let Err(err) = ws.send(Message::text(patch)).await {
