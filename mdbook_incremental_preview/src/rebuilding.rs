@@ -17,11 +17,10 @@ pub async fn rebuild_on_change(
     let book_toml = book_root.join("book.toml");
 
     let mut _debouncer_to_keep_watcher_alive;
-    let (mut render_context, mut theme);
     let (mut book, mut file_404, mut maybe_gitignore, mut summary_md) = Default::default();
-    let (mut theme_dir, mut handlebars, mut rendering) = Default::default();
-    let (mut html_config, mut old_html_config) = Default::default();
-    let (mut src_dir, mut extra_watch_dirs): (PathBuf, Vec<_>) = Default::default();
+    let (mut theme_dir, mut html_config, mut old_html_config) = Default::default();
+    let (mut src_dir, mut extra_watch_dirs, mut hbs_state): (PathBuf, Vec<_>, HtmlHbsState) =
+        Default::default();
     let (mut full_rebuild, mut reload_watcher, mut reload_server) = (true, true, true);
     yield_now().await;
 
@@ -37,36 +36,32 @@ pub async fn rebuild_on_change(
                     yield_now().await;
                     book = b;
 
-                    drop(rendering); // Needed to reassign `render_context`.
-                    drop(handlebars);
-                    render_context = make_render_context(&book, build_dir)?;
+                    // Needed to reassign `render_context`.
+                    let render_context = make_render_context(&book, build_dir)?;
                     let old_theme_dir = theme_dir;
                     old_html_config = html_config;
+                    let (theme, handlebars);
                     (html_config, theme_dir, theme, handlebars) = block_in_place(|| {
                         html_config_n_theme_dir_n_theme_n_handlebars(&render_context)
                     })?;
                     theme_dir_changed = old_theme_dir != theme_dir;
-                    rendering = block_in_place(|| {
-                        StatefulHtmlHbs::render(
-                            &render_context,
-                            html_config.clone(),
-                            &theme,
-                            &handlebars,
-                        )
-                    })?;
+                    hbs_state
+                        .full_render(&render_context, html_config.clone(), &theme, &handlebars)
+                        .await?;
 
                     info!(
                         ?theme_dir,
-                        len_rendering_path2ctxs = rendering.path2ctxs.len(),
+                        len_rendering_path2ctxs = hbs_state.path2ctxs.len(),
+                        ?hbs_state.index_path,
                         "rebuilt the book"
                     );
+                    patch_registry_ref
+                        .cast(PatchRegistryRequest::Clear(hbs_state.index_path.clone()))
+                        .await
+                        .context("Clearing the patch registry")?;
                 }
                 Err(err) => error!(?err, "failed to load book config"),
             }
-            patch_registry_ref
-                .cast(PatchRegistryRequest::Clear)
-                .await
-                .context("Clearing the patch registry")?;
         }
         if mem::take(&mut reload_watcher) {
             let new_src_dir = book.source_dir();
@@ -188,7 +183,7 @@ pub async fn rebuild_on_change(
             debug!(full_rebuild, reload_watcher, reload_server);
 
             if !full_rebuild {
-                match rendering
+                match hbs_state
                     .patch(&mut book, &src_dir, &paths, &mut patch_registry_ref)
                     .await
                 {

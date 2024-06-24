@@ -6,6 +6,8 @@ use super::*;
 #[derive(Default)]
 pub struct PatchRegistry {
     patches: HashMap<PathBuf, watch::Sender<String>>,
+    /// Relative HTTP path of the index chapter.
+    index_path: Option<PathBuf>,
 }
 
 impl Actor for PatchRegistry {
@@ -32,7 +34,13 @@ impl Actor for PatchRegistry {
                     Entry::Vacant(entry) => _ = entry.insert(watch::channel(patch).0),
                 };
             }
-            PatchRegistryRequest::Clear => self.patches.clear(),
+            PatchRegistryRequest::Clear(index_path) => {
+                self.patches.clear();
+                if let Some(index_path) = index_path {
+                    self.index_path = Some(index_path.with_extension("html"));
+                    debug!(?self.index_path, "Updated index path in patch registry.")
+                }
+            }
         }
         Ok(())
     }
@@ -43,8 +51,14 @@ impl Actor for PatchRegistry {
         _env: &mut ActorRef<Self>,
         response_sender: oneshot::Sender<Self::R>,
     ) -> Result<()> {
+        debug!(?msg, "PatchRegistry::handle_call");
         match msg {
             PatchRegistryQuery::Watch(path) => {
+                let path = match &self.index_path {
+                    // Convert the path to root (`""`) to the index path.
+                    Some(index_path) if path == PathBuf::new() => index_path.clone(),
+                    _ => path,
+                };
                 let watch_receiver = match self.patches.entry(path) {
                     Entry::Occupied(entry) => entry.get().subscribe(),
                     Entry::Vacant(entry) => {
@@ -73,8 +87,8 @@ impl Actor for PatchRegistry {
 pub enum PatchRegistryRequest {
     /// Register a new patch.
     NewPatch(PathBuf, String),
-    /// Clear the registry.
-    Clear,
+    /// Clear the registry, with an optional new index path.
+    Clear(Option<PathBuf>),
 }
 
 /// A query for the patch registry.

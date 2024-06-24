@@ -1,9 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     ffi::OsStr,
-    fs::{self, File},
-    io::{self, Read},
-    iter, mem,
+    io, iter, mem,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -35,6 +33,8 @@ use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::{
+    fs::{self, File},
+    io::AsyncReadExt,
     select,
     sync::{mpsc, oneshot, watch},
     task::{block_in_place, yield_now, JoinSet},
