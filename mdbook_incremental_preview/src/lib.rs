@@ -129,12 +129,11 @@ pub async fn live_patch_continuously(
 
     rebuild_on_change(
         book_root,
-        serving_url,
+        open_browser.then_some(serving_url),
         build_dir,
         info_tx,
         file_event_tx,
         file_event_rx,
-        open_browser,
         patch_registry_ref,
     )
     .await?;

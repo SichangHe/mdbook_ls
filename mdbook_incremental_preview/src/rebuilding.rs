@@ -3,15 +3,13 @@ use super::*;
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/watch/native.rs>.
 
-#[allow(clippy::too_many_arguments)]
 pub async fn rebuild_on_change(
     book_root: PathBuf,
-    serving_url: String,
+    mut serving_url: Option<String>,
     build_dir: &Path,
     info_tx: mpsc::Sender<ServeInfo>,
     file_event_tx: mpsc::Sender<Vec<PathBuf>>,
     mut file_event_rx: mpsc::Receiver<Vec<PathBuf>>,
-    mut open_browser: bool,
     mut patch_registry_ref: ActorRef<PatchRegistry>,
 ) -> Result<()> {
     let book_toml = book_root.join("book.toml");
@@ -36,7 +34,6 @@ pub async fn rebuild_on_change(
                     yield_now().await;
                     book = b;
 
-                    // Needed to reassign `render_context`.
                     let render_context = make_render_context(&book, build_dir)?;
                     let old_theme_dir = theme_dir;
                     old_html_config = html_config;
@@ -156,7 +153,7 @@ pub async fn rebuild_on_change(
                     })
                     .await
                     .context("The server is unavailable to receive info.")?;
-                if mem::take(&mut open_browser) {
+                if let Some(serving_url) = mem::take(&mut serving_url) {
                     block_in_place(|| open(&serving_url));
                 }
             }
