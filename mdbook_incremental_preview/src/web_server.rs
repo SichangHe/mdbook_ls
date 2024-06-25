@@ -4,7 +4,7 @@ pub async fn serve_reloading(
     book_root: PathBuf,
     address: SocketAddr,
     build_dir: PathBuf,
-    file_event_tx: mpsc::Sender<Vec<PathBuf>>,
+    rebuilder_ref: ActorRef<Rebuilder>,
     mut info_rx: mpsc::Receiver<ServeInfo>,
     patch_registry_ref: ActorRef<PatchRegistry>,
 ) {
@@ -16,7 +16,7 @@ pub async fn serve_reloading(
     let mut info_buf = Vec::new();
     loop {
         let maybe_maybe_info = select! {
-            _ = serve(book_root.clone(), build_dir.clone(), address, file_event_tx.clone(), info.clone(), patch_registry_ref.clone()) => None,
+            _ = serve(book_root.clone(), build_dir.clone(), address, rebuilder_ref.clone(), info.clone(), patch_registry_ref.clone()) => None,
             maybe_info = info_rx.recv() => Some(maybe_info),
         };
         match maybe_maybe_info {
@@ -50,7 +50,7 @@ pub async fn serve(
     book_root: PathBuf,
     build_dir: PathBuf,
     address: SocketAddr,
-    file_event_tx: mpsc::Sender<Vec<PathBuf>>,
+    rebuilder_ref: ActorRef<Rebuilder>,
     info: ServeInfo,
     patch_registry_ref: ActorRef<PatchRegistry>,
 ) {
@@ -78,17 +78,10 @@ pub async fn serve(
             })
         });
 
-    let summary_md = Arc::new(src_dir.join("SUMMARY.md"));
     let build_artifact = warp::get()
         // Check if the path has a patch.
         .and(warp::path::full())
-        .and(warp::get().map(move || {
-            (
-                patch_registry_ref.clone(),
-                file_event_tx.clone(),
-                summary_md.clone(),
-            )
-        }))
+        .and(warp::get().map(move || (patch_registry_ref.clone(), rebuilder_ref.clone())))
         .and_then(filter_patched_path)
         .untuple_one()
         .and(warp::fs::dir(build_dir.clone()));
@@ -166,11 +159,7 @@ async fn handle_ws(
 
 async fn filter_patched_path(
     full_path: FullPath,
-    (patch_registry_ref, file_event_tx, summary_md): (
-        ActorRef<PatchRegistry>,
-        mpsc::Sender<Vec<PathBuf>>,
-        Arc<PathBuf>,
-    ),
+    (patch_registry_ref, rebuilder_ref): (ActorRef<PatchRegistry>, ActorRef<Rebuilder>),
 ) -> Result<(), warp::reject::Rejection> {
     let path = full_path.as_str().trim_start_matches('/');
     match patch_registry_ref
@@ -183,8 +172,8 @@ async fn filter_patched_path(
                     path,
                     "Client requested patched path. Issuing a full rebuild."
                 );
-                file_event_tx
-                    .send(vec![summary_md.to_path_buf()])
+                rebuilder_ref
+                    .cast(RebuildInfo::Rebuild(false))
                     .await
                     .drop_result();
             }

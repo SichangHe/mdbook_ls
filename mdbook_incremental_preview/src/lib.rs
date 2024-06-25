@@ -5,13 +5,12 @@ use std::{
     io, iter, mem,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
 
 use anyhow::{bail, Context};
 use drop_this::*;
-use futures_util::{sink::SinkExt, FutureExt};
+use futures_util::sink::SinkExt;
 use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
 use mdbook::{
@@ -26,8 +25,7 @@ use mdbook::{
         HtmlHandlebars, RenderContext,
     },
     theme::{self, playground_editor, Theme},
-    utils::{self, fs::get_404_output_file},
-    BookItem, MDBook,
+    utils, BookItem, MDBook,
 };
 use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
@@ -89,57 +87,67 @@ pub async fn live_patch_continuously(
     info!(?serving_url, ?book_root, ?build_dir, "Will serve");
 
     let mut join_set = JoinSet::new();
-    let patch_registry_ref = {
-        let registry = PatchRegistry::default();
-        let (msg_sender, msg_receiver) = mpsc::channel(8);
-        let a_ref = ActorRef::<PatchRegistry> {
-            msg_sender,
-            cancellation_token: CancellationToken::new(),
-        };
-        let env = a_ref.clone();
-        join_set.spawn(
-            registry
-                .run_and_handle_exit(env, msg_receiver)
-                .then(|(_, r)| async {
-                    if let Err(err) = r {
-                        error!(?err, "PatchRegistry exit");
-                    }
-                }),
-        );
-        a_ref
-    };
+    let cancel_token = CancellationToken::new();
+    let patch_registry_ref = spawn_actor_n_log_err(
+        PatchRegistry::default(),
+        &mut join_set,
+        8,
+        &cancel_token,
+        "PatchRegistry exit",
+    );
 
-    let (file_event_tx, file_event_rx) = mpsc::channel(64);
-    let info_tx = {
-        let (info_tx, info_rx) = mpsc::channel(8);
-        let book_root = book_root.clone();
-        let build_dir = build_dir.to_path_buf();
-        let file_event_tx = file_event_tx.clone();
-        let patch_registry_ref = patch_registry_ref.clone();
-        join_set.spawn(serve_reloading(
-            book_root,
-            socket_address,
-            build_dir,
-            file_event_tx,
-            info_rx,
-            patch_registry_ref,
-        ));
-        info_tx
-    };
-
-    rebuild_on_change(
-        book_root,
+    let (info_tx, info_rx) = mpsc::channel(8);
+    let rebuilder = Rebuilder::new(
+        book_root.clone(),
+        build_dir.to_owned(),
+        info_tx.clone(),
+        patch_registry_ref.clone(),
         open_browser.then_some(serving_url),
-        build_dir,
-        info_tx,
-        file_event_tx,
-        file_event_rx,
-        patch_registry_ref,
-    )
-    .await?;
+    );
+    let rebuilder_ref = spawn_actor_n_log_err(
+        rebuilder,
+        &mut join_set,
+        64,
+        &cancel_token,
+        "Rebuilder exit",
+    );
 
-    join_set.shutdown().await;
+    join_set.spawn(serve_reloading(
+        book_root,
+        socket_address,
+        build_dir.to_owned(),
+        rebuilder_ref,
+        info_rx,
+        patch_registry_ref,
+    ));
+
+    while join_set.join_next().await.is_some() {}
     Ok(())
+}
+
+fn spawn_actor_n_log_err<A>(
+    actor: A,
+    join_set: &mut JoinSet<()>,
+    channel_capacity: usize,
+    cancel_token: &CancellationToken,
+    exit_msg: &'static str,
+) -> ActorRef<A>
+where
+    A: Actor + Send + 'static,
+    ActorMsg<A>: Send,
+{
+    let (msg_sender, msg_receiver) = mpsc::channel(channel_capacity);
+    let a_ref = ActorRef::<A> {
+        msg_sender,
+        cancellation_token: cancel_token.child_token(),
+    };
+    let env = a_ref.clone();
+    join_set.spawn(async move {
+        if let (_, Err(err)) = actor.run_and_handle_exit(env, msg_receiver).await {
+            error!(?err, exit_msg);
+        }
+    });
+    a_ref
 }
 
 fn open<P: AsRef<OsStr>>(path: P) {

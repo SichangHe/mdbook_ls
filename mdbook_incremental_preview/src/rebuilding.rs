@@ -17,6 +17,12 @@ impl Actor for Rebuilder {
     type T = RebuildInfo;
     type R = ();
 
+    async fn init(&mut self, env: &mut ActorRef<Self>) -> Result<()> {
+        // Start with a full reload.
+        env.cast(RebuildInfo::Rebuild(true)).await.drop_result();
+        Ok(())
+    }
+
     async fn handle_cast(&mut self, msg: Self::T, env: &mut ActorRef<Self>) -> Result<()> {
         match msg {
             RebuildInfo::Rebuild(reload) => {
@@ -224,6 +230,7 @@ impl Rebuilder {
         build_dir: PathBuf,
         info_tx: mpsc::Sender<ServeInfo>,
         patch_registry_ref: ActorRef<PatchRegistry>,
+        serving_url: Option<String>,
     ) -> Self {
         let book_toml = book_root.join("book.toml");
         Self {
@@ -232,7 +239,10 @@ impl Rebuilder {
             info_tx,
             patch_registry_ref,
             book_toml,
-            mutables: Default::default(),
+            mutables: RebuilderMut {
+                serving_url,
+                ..Default::default()
+            },
         }
     }
 }
@@ -310,192 +320,4 @@ pub struct RebuilderMut {
     pub hbs_state: HtmlHbsState,
     pub rebuild_join_set: JoinSet<()>,
     pub persistent_join_set: JoinSet<()>,
-}
-
-pub async fn rebuild_on_change(
-    book_root: PathBuf,
-    mut serving_url: Option<String>,
-    build_dir: &Path,
-    info_tx: mpsc::Sender<ServeInfo>,
-    file_event_tx: mpsc::Sender<Vec<PathBuf>>,
-    mut file_event_rx: mpsc::Receiver<Vec<PathBuf>>,
-    mut patch_registry_ref: ActorRef<PatchRegistry>,
-) -> Result<()> {
-    let book_toml = book_root.join("book.toml");
-
-    let mut _debouncer_to_keep_watcher_alive;
-    let (mut book, mut file_404, mut maybe_gitignore, mut summary_md) = Default::default();
-    let (mut theme_dir, mut html_config) = Default::default();
-    let (mut src_dir, mut extra_watch_dirs, mut hbs_state): (PathBuf, Vec<_>, HtmlHbsState) =
-        Default::default();
-    let mut full_rebuild = Some(true);
-    yield_now().await;
-
-    loop {
-        if let Some(reload) = mem::take(&mut full_rebuild) {
-            info!(?build_dir, "Full rebuild");
-            match block_in_place(|| MDBook::load(&book_root)) {
-                Ok(mut b) => {
-                    if let Err(err) = config_book_for_live_reload(&mut b) {
-                        error!(?err, "configuring the book for live reload");
-                    }
-                    yield_now().await;
-                    book = b;
-
-                    let render_context = make_render_context(&book, build_dir)?;
-                    let (old_theme_dir, old_html_config) = (theme_dir, html_config);
-                    let (theme, handlebars);
-                    (html_config, theme_dir, theme, handlebars) = block_in_place(|| {
-                        html_config_n_theme_dir_n_theme_n_handlebars(&render_context)
-                    })?;
-                    hbs_state
-                        .full_render(&render_context, html_config.clone(), &theme, &handlebars)
-                        .await?;
-
-                    info!(
-                        ?theme_dir,
-                        len_rendering_path2ctxs = hbs_state.path2ctxs.len(),
-                        ?hbs_state.index_path,
-                        "rebuilt the book"
-                    );
-                    patch_registry_ref
-                        .cast(PatchRegistryRequest::Clear {
-                            index_path: hbs_state.index_path.clone(),
-                            smart_punctuation: hbs_state.smart_punctuation,
-                        })
-                        .await
-                        .context("Clearing the patch registry")?;
-
-                    if reload {
-                        // Reload file watcher if applicable.
-                        let new_src_dir = book.source_dir();
-                        let src_dir_changed = match new_src_dir == src_dir {
-                            false => {
-                                src_dir = new_src_dir;
-                                summary_md = src_dir.join("SUMMARY.md");
-                                true
-                            }
-                            true => false,
-                        };
-                        let theme_dir_changed = old_theme_dir != theme_dir;
-
-                        let extra_watch_dirs_changed = match extra_watch_dirs
-                            == book.config.build.extra_watch_dirs
-                        {
-                            false => {
-                                extra_watch_dirs.clone_from(&book.config.build.extra_watch_dirs);
-                                true
-                            }
-                            true => false,
-                        };
-
-                        debug!(
-                            ?src_dir_changed,
-                            theme_dir_changed, extra_watch_dirs_changed
-                        );
-                        if src_dir_changed || theme_dir_changed || extra_watch_dirs_changed {
-                            info!(?book_root, "Reloading the watcher");
-                            let tx = file_event_tx.clone();
-                            let event_handler =
-                                move |events: Result<Vec<DebouncedEvent>, _>| match events {
-                                    Ok(events) => tx
-                                        .blocking_send(
-                                            events.into_iter().map(|event| event.path).collect(),
-                                        )
-                                        .drop_result(),
-                                    Err(err) => error!(?err, "Watching for changes"),
-                                };
-                            _debouncer_to_keep_watcher_alive = block_in_place(|| {
-                                watch_file_changes(
-                                    &book_root,
-                                    &src_dir,
-                                    &theme_dir,
-                                    &book_toml,
-                                    &extra_watch_dirs,
-                                    event_handler,
-                                )
-                            });
-                        }
-
-                        // Reload server if applicable.
-                        let input_404 = book
-                            .config
-                            .get("output.html.input-404")
-                            .and_then(toml::Value::as_str)
-                            .map(ToString::to_string);
-                        let new_file_404 = build_dir.join(get_404_output_file(&input_404));
-                        yield_now().await;
-                        let file_404_changed = match new_file_404 == file_404 {
-                            false => {
-                                file_404 = new_file_404;
-                                true
-                            }
-                            true => false,
-                        };
-
-                        debug!(src_dir_changed, file_404_changed);
-                        if src_dir_changed
-                            || html_config.additional_js != old_html_config.additional_js
-                            || html_config.additional_css != old_html_config.additional_css
-                            || file_404_changed
-                        {
-                            info!(?src_dir, ?html_config.additional_js, ?html_config.additional_css, ?file_404, "Reloading the server");
-                            info_tx
-                                .send(ServeInfo {
-                                    src_dir: src_dir.clone(),
-                                    theme_dir: theme_dir.clone(),
-                                    additional_js: html_config.additional_js.clone(),
-                                    additional_css: html_config.additional_css.clone(),
-                                    file_404: file_404.clone(),
-                                })
-                                .await
-                                .context("The server is unavailable to receive info.")?;
-                            if let Some(serving_url) = mem::take(&mut serving_url) {
-                                block_in_place(|| open(&serving_url));
-                            }
-                        }
-                    }
-                }
-                Err(err) => error!(?err, "failed to load book config"),
-            }
-        }
-
-        let paths = recv_changed_paths(&book_root, &maybe_gitignore, &mut file_event_rx).await;
-        if !paths.is_empty() {
-            info!(?paths, "Directories changed");
-            full_rebuild = match &maybe_gitignore {
-                Some((_, gitignore_path)) if paths.contains(gitignore_path) => {
-                    // Gitignore file changed,
-                    // update the gitignore and make a full rebuild.
-                    maybe_gitignore = block_in_place(|| maybe_make_gitignore(&book_root));
-                    debug!("reloaded gitignore");
-                    Some(false)
-                }
-                // `book.toml` changed, make a full rebuild,
-                // reload the watcher and the server.
-                _ if paths.contains(&book_toml) => Some(true),
-                // `Summary.md` or theme changed, make a full rebuild.
-                _ if paths.contains(&summary_md)
-                    || paths.iter().any(|path| path.starts_with(&theme_dir)) =>
-                {
-                    Some(false)
-                }
-                _ => None,
-            };
-            debug!(full_rebuild);
-
-            if full_rebuild.is_none() {
-                match hbs_state
-                    .patch(&mut book, &src_dir, &paths, &mut patch_registry_ref)
-                    .await
-                {
-                    Ok(_) => debug!("Patched the book"),
-                    Err(err) => {
-                        error!(?err, "patching the book. Falling back to a full rebuild.");
-                        full_rebuild = Some(true);
-                    }
-                }
-            }
-        }
-    }
 }
