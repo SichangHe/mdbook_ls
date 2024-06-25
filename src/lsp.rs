@@ -145,6 +145,7 @@ impl LanguageServer for MDBookLS {
     }
 
     async fn shutdown(&self) -> Result<()> {
+        self.live_patcher.cancel();
         Ok(())
     }
 }

@@ -28,6 +28,9 @@ impl LivePatcher {
         })
     }
 
+    /// This function does not check if the actors and
+    /// tasks have already been started;
+    /// the caller is responsible for stopping them.
     fn start(&mut self, env: &ActorRef<Self>) {
         let serving_url = self.serving_url();
         let (info_tx, info_rx) = mpsc::channel(8);
@@ -177,6 +180,16 @@ impl Actor for LivePatcher {
             }
         }
         Ok(())
+    }
+
+    async fn before_exit(
+        &mut self,
+        run_result: Result<()>,
+        _env: &mut ActorRef<Self>,
+        _msg_receiver: &mut mpsc::Receiver<ActorMsg<Self>>,
+    ) -> Result<()> {
+        self.stop().await;
+        run_result
     }
 }
 
