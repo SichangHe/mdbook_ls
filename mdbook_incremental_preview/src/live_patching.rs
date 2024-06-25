@@ -42,6 +42,8 @@ impl LivePatcher {
             rebuilder.spawn_with_token(env.cancellation_token.child_token());
         self.rebuilder = Some((handle, rebuilder_ref.clone()));
 
+        // TODO: Rid `serve_reloading` and combine the functionality into
+        // `LivePatcher`.
         self.server = Some(spawn(serve_reloading(
             self.book_root.clone(),
             self.socket_address,

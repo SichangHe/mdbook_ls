@@ -5,21 +5,18 @@ use super::*;
 #[derive(Debug)]
 pub struct MDBookLS {
     client: Client,
-    /// Join set to automatically cancel the live patcher.
-    _join_set: JoinSet<ActorOutput<ActorMsg<LivePatcher>>>,
+    live_patcher_handle: ActorHandle<ActorMsg<LivePatcher>>,
     live_patcher: ActorRef<LivePatcher>,
 }
 
 impl MDBookLS {
-    pub fn new(client: Client) -> Self {
-        let mut join_set = Default::default();
-        let live_patcher = LivePatcher::default();
+    pub fn new(client: Client, live_patcher: LivePatcher) -> Self {
         let (tx, msg_receiver) = mpsc::channel(8);
-        let (_, live_patcher) =
-            live_patcher.spawn_with_channel_from_join_set(tx.clone(), msg_receiver, &mut join_set);
+        let (live_patcher_handle, live_patcher) =
+            live_patcher.spawn_with_channel(tx.clone(), msg_receiver);
         Self {
             client,
-            _join_set: join_set,
+            live_patcher_handle,
             live_patcher,
         }
     }
@@ -138,6 +135,12 @@ impl LanguageServer for MDBookLS {
 
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl Drop for MDBookLS {
+    fn drop(&mut self) {
+        self.live_patcher_handle.abort();
     }
 }
 

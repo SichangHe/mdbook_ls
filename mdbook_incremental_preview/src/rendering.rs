@@ -211,7 +211,8 @@ impl HtmlHbsState {
     ) -> Result<()> {
         let original_book_preserved = mem::take(&mut book.book);
 
-        // TODO: Parallelize.
+        // NOTE: This being single-threaded is fine because
+        // usually only one chapter is patched at a time.
         for path in paths.into_iter() {
             let Some(CtxCore {
                 chapter_name,
