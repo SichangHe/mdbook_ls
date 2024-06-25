@@ -1,4 +1,4 @@
-use std::path::{PathBuf, Path};
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use drop_this::*;
@@ -16,7 +16,8 @@ use tracing::*;
 pub mod live_patching;
 pub mod lsp;
 
-use {live_patching::*, lsp::*};
+use live_patching::*;
+use lsp::*;
 
 pub async fn run_mdbook_ls() {
     let (stdin, stdout) = (stdin(), stdout());

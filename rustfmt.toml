@@ -1,0 +1,4 @@
+ignore = [
+    "mdbook_fork4ls",
+]
+imports_granularity = "Crate"
