@@ -149,11 +149,12 @@ async fn handle_ws(
                 ?path,
                 "Patch update did not deliver. Closing WebSocket."
             );
-            break;
+            return Ok(());
         }
         debug!("Sent patch update to WebSocket at {path:?}.");
     }
     // The patch sender is dropped, signaling a full rebuild.
+    ws.send(Message::text("__RELOAD")).await.drop_result();
     Ok(())
 }
 

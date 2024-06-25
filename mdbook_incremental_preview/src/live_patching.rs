@@ -70,21 +70,28 @@ impl LivePatcher {
 
     async fn stop(&mut self) {
         self.maybe_stop_web_server();
+        if let Some(handle) = mem::take(&mut self.server) {
+            handle.await.drop_result();
+            // FIXME: The web server does not really stop.
+            // Warp keeps its threads alive in the background.
+        }
         if let Some((handle, actor_ref)) = mem::take(&mut self.rebuilder) {
             actor_ref.cancel();
             if let Err(err) = try_join_actor_handle(handle).await {
-                error!(?err, "joininig the rebuilder's handle.");
+                error!(?err, "joininig the Rebuilder's handle.");
             }
         }
-        if let Some(handle) = mem::take(&mut self.server) {
-            if let Err(err) = handle.await {
-                error!(?err, "joininig the preview server's handle.");
+        if let Some((handle, actor_ref)) = mem::take(&mut self.patch_registry) {
+            actor_ref.cancel();
+            if let Err(err) = try_join_actor_handle(handle).await {
+                error!(?err, "joininig the PatchRegistry's handle.");
             }
         }
     }
 
     fn maybe_stop_web_server(&self) {
         if let Some(handle) = &self.server {
+            debug!("Stopping web server.");
             handle.abort();
         }
     }
@@ -106,7 +113,6 @@ impl Actor for LivePatcher {
     type T = LivePatcherInfo;
     type R = ();
     async fn handle_cast(&mut self, msg: Self::T, env: &mut ActorRef<Self>) -> Result<()> {
-        debug!(?msg, "Handling cast.");
         match msg {
             LivePatcherInfo::BookRoot(book_root) if book_root == self.book_root => {
                 debug!(?book_root, "Ignoring unchanged.");
@@ -121,6 +127,7 @@ impl Actor for LivePatcher {
                 }
             }
             LivePatcherInfo::OpenPreview(options) => {
+                debug!(?options, "Opening preview.");
                 if let Some((socket_address, open_preview)) = options {
                     (self.socket_address, self.open_preview) = (socket_address, open_preview);
                 }
@@ -139,6 +146,7 @@ impl Actor for LivePatcher {
                 self.stop().await;
             }
             LivePatcherInfo::Opened { path, version } => {
+                debug!(?path, version, "Opened.");
                 // TODO: Pause watching `path`.
                 self.versions
                     .entry(path)
@@ -167,6 +175,7 @@ impl Actor for LivePatcher {
                 if updated {
                     match &self.rebuilder {
                         Some((_, rebuilder_ref)) => {
+                            debug!(?path, version, "Modified content.");
                             let msg = RebuildInfo::ModifiedContent { path, content };
                             rebuilder_ref.cast(msg).await.expect("Rebuilder died.");
                         }
@@ -175,6 +184,7 @@ impl Actor for LivePatcher {
                 }
             }
             LivePatcherInfo::Closed(path) => {
+                debug!(?path, "Closed.");
                 self.versions.remove(&path);
                 // TODO: Resume watching `path`.
             }

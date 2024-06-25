@@ -1,8 +1,10 @@
 # mdBook Language Server
 
 WIP.
-The goal of mdBook LS is to provide a language server to
-preview mdBook projects live.
+
+mdBook-LS provides a language server to preview mdBook projects live,
+patching the edited chapter instantly as you type in your editor.
+Please see [Editor Setup](#editor-setup) for details on usage.
 
 ## Editor Setup
 
@@ -67,6 +69,12 @@ function mdbook_ls_setup(capabilities)
     }
 end
 ```
+
+Now, you would have two Vim commands:
+`MDBookLSOpenPreview` starts the preview and opens the browser;
+`MDBookLSStopPreview` stops updating the preview
+(we are unable to stop the web server,
+seemingly because of Warp's limitations).
 
 </details>
 
