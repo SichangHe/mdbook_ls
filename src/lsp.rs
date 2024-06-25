@@ -6,7 +6,7 @@ use super::*;
 pub struct MDBookLS {
     client: Client,
     /// Join set to automatically cancel the live patcher.
-    _join_set: JoinSet<ActorOutput<<LivePatcher as ActorExt>::Msg>>,
+    _join_set: JoinSet<ActorOutput<ActorMsg<LivePatcher>>>,
     live_patcher: ActorRef<LivePatcher>,
 }
 
@@ -50,13 +50,7 @@ impl LanguageServer for MDBookLS {
             .expect("Live patcher died.");
 
         Ok(InitializeResult {
-            capabilities: ServerCapabilities {
-                execute_command_provider: Some(ExecuteCommandOptions {
-                    commands: vec![OPEN_PREVIEW.into(), STOP_PREVIEW.into()],
-                    work_done_progress_options: Default::default(),
-                }),
-                ..Default::default()
-            },
+            capabilities: server_capabilities(),
             ..Default::default()
         })
     }
@@ -85,7 +79,81 @@ impl LanguageServer for MDBookLS {
         Ok(None)
     }
 
+    async fn did_open(
+        &self,
+        DidOpenTextDocumentParams {
+            text_document:
+                TextDocumentItem {
+                    uri,
+                    language_id,
+                    version,
+                    text: _,
+                },
+        }: DidOpenTextDocumentParams,
+    ) {
+        info!(uri.path = uri.path(), language_id, version, "did_open");
+        match (language_id.as_str(), uri2abs_file_path(&uri)) {
+            ("markdown", Some(path)) => {
+                // TODO: Pause watching `path`.
+            }
+            ("markdown", _) => info!(uri.path = uri.path(), "Markdown but not a file!"),
+            _ => {}
+        }
+    }
+
+    async fn did_change(
+        &self,
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri, version },
+            mut content_changes,
+        }: DidChangeTextDocumentParams,
+    ) {
+        info!(uri.path = uri.path(), version, "did_change");
+        match (content_changes.pop(), uri2abs_file_path(&uri)) {
+            (Some(TextDocumentContentChangeEvent { text, .. }), Some(path)) => {
+                // TODO: Send (path, version, text).
+            }
+            (Some(_), _) => info!(uri.path = uri.path(), "Not a file!"),
+            _ => warn!("Empty content change!"),
+        }
+        if !content_changes.is_empty() {
+            warn!(
+                ?content_changes,
+                "Unexpected due to `TextDocumentSyncKind::FULL`: more than one content changes! Only handled the last one."
+            );
+        }
+    }
+
+    async fn did_close(
+        &self,
+        DidCloseTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri },
+        }: DidCloseTextDocumentParams,
+    ) {
+        info!(uri.path = uri.path(), "did_close");
+        if let Some(path) = uri2abs_file_path(&uri) {
+            // TODO: Resume watching `path`.
+        }
+    }
+
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+fn uri2abs_file_path(uri: &Url) -> Option<&Path> {
+    (uri.scheme() == "file").then_some(Path::new(uri.path()))
+}
+
+fn server_capabilities() -> ServerCapabilities {
+    ServerCapabilities {
+        // NOTE: Let the client send the whole file on every change so
+        // we do not need to patch it ourselves.
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        execute_command_provider: Some(ExecuteCommandOptions {
+            commands: vec![OPEN_PREVIEW.into(), STOP_PREVIEW.into()],
+            work_done_progress_options: Default::default(),
+        }),
+        ..Default::default()
     }
 }

@@ -92,7 +92,7 @@ impl Actor for Rebuilder {
                         // TODO: Handle race condition:
                         // what if a full rebuild is ongoing when I patch?
                         let (book, p_ref) = (&mut m.book, &mut self.patch_registry_ref);
-                        // NOTE: This should be fast enough so that
+                        // NOTE: We assume this is be fast enough so that
                         // we do not need to spawn a separate task.
                         let patched = m.hbs_state.patch(book, &m.src_dir, &paths, p_ref);
                         match patched.await {
