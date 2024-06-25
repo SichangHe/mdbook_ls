@@ -5,6 +5,7 @@ pub struct LivePatcher {
     book_root: PathBuf,
     socket_address: SocketAddr,
     open_preview: bool,
+    versions: HashMap<PathBuf, i32>,
     patch_registry: Option<(
         ActorHandle<ActorMsg<PatchRegistry>>,
         ActorRef<PatchRegistry>,
@@ -20,6 +21,7 @@ impl LivePatcher {
             book_root: Default::default(),
             socket_address: ([127, 0, 0, 1], 3000).into(),
             open_preview: true,
+            versions: Default::default(),
             patch_registry: None,
             rebuilder: None,
             server: None,
@@ -129,7 +131,50 @@ impl Actor for LivePatcher {
                     None => self.start(env),
                 }
             }
-            LivePatcherInfo::StopPreview => todo!(),
+            LivePatcherInfo::StopPreview => {
+                info!("Stopping live patching.");
+                self.stop().await;
+            }
+            LivePatcherInfo::Opened { path, version } => {
+                // TODO: Pause watching `path`.
+                self.versions
+                    .entry(path)
+                    .and_modify(|v| *v = version.max(*v))
+                    .or_insert(version);
+            }
+            LivePatcherInfo::ModifiedContent {
+                path,
+                version,
+                content,
+            } => {
+                let updated = match self.versions.get_mut(&path) {
+                    Some(v) if *v < version => {
+                        *v = version;
+                        true
+                    }
+                    Some(_) => {
+                        debug!(?path, version, "Ignoring out-of-order modification update.");
+                        false
+                    }
+                    None => {
+                        self.versions.insert(path.clone(), version);
+                        true
+                    }
+                };
+                if updated {
+                    match &self.rebuilder {
+                        Some((_, rebuilder_ref)) => {
+                            let msg = RebuildInfo::ModifiedContent { path, content };
+                            rebuilder_ref.cast(msg).await.expect("Rebuilder died.");
+                        }
+                        None => debug!(?path, "Ignoring modified content, without rebuilder."),
+                    }
+                }
+            }
+            LivePatcherInfo::Closed(path) => {
+                self.versions.remove(&path);
+                // TODO: Resume watching `path`.
+            }
         }
         Ok(())
     }
@@ -143,6 +188,16 @@ pub enum LivePatcherInfo {
     OpenPreview(Option<(SocketAddr, bool)>),
     /// Stop the preview server.
     StopPreview,
+    /// Opened path.
+    Opened { path: PathBuf, version: i32 },
+    /// Content of a modified path.
+    ModifiedContent {
+        path: PathBuf,
+        version: i32,
+        content: String,
+    },
+    /// Closed path.
+    Closed(PathBuf),
 }
 
 impl Drop for LivePatcher {

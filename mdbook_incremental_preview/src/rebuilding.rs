@@ -29,12 +29,12 @@ impl Actor for Rebuilder {
                 info!(?self.build_dir, "Full rebuild.");
                 let join_set = &mut self.mutables.rebuild_join_set;
                 // Abort old tasks.
-                join_set.shutdown().await;
+                // TODO: Just use an `Option<ActorHandle>` instead.
+                join_set.abort_all();
                 join_set.spawn(load_book(
                     self.book_root.clone(),
                     self.build_dir.clone(),
                     reload,
-                    mem::take(&mut self.mutables.hbs_state),
                     env.clone(),
                 ));
             }
@@ -105,6 +105,36 @@ impl Actor for Rebuilder {
                     }
                 }
             }
+            RebuildInfo::ModifiedContent { path, content } => {
+                let m = &mut self.mutables;
+                if let Some(CtxCore {
+                    chapter_name,
+                    len_content,
+                }) = m.hbs_state.path2ctxs.get(&path)
+                {
+                    let relative_path = path.strip_prefix(&m.src_dir)?;
+                    debug!(
+                        ?path,
+                        chapter_name,
+                        len_content,
+                        ?relative_path,
+                        "Patching with content."
+                    );
+                    // TODO: Spawn this into `self.mutables.patch_join_set`
+                    // instead of blocking here.
+                    if let Err(err) = patch_chapter_w_content(
+                        chapter_name,
+                        content,
+                        relative_path,
+                        &mut m.book,
+                        &mut self.patch_registry_ref,
+                    )
+                    .await
+                    {
+                        error!(?err, "patching with content. Ignoring it.");
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -117,6 +147,8 @@ pub enum RebuildInfo {
     NewBook(Box<BookData>),
     /// Paths changed.
     ChangedPaths(Vec<PathBuf>),
+    /// Content of a modified path.
+    ModifiedContent { path: PathBuf, content: String },
 }
 
 impl Rebuilder {
@@ -251,14 +283,8 @@ fn clean_up_join_set<T: 'static>(join_set: &mut JoinSet<T>) {
     while join_set.try_join_next().is_some() {}
 }
 
-async fn load_book(
-    book_root: PathBuf,
-    build_dir: PathBuf,
-    reload: bool,
-    hbs_state: HtmlHbsState,
-    env: ActorRef<Rebuilder>,
-) {
-    if let Err(err) = try_load_book(book_root, build_dir, reload, hbs_state, env).await {
+async fn load_book(book_root: PathBuf, build_dir: PathBuf, reload: bool, env: ActorRef<Rebuilder>) {
+    if let Err(err) = try_load_book(book_root, build_dir, reload, Default::default(), env).await {
         error!(?err, "loading and preprocessing the book.");
     }
 }

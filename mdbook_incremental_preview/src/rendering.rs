@@ -225,31 +225,14 @@ impl HtmlHbsState {
             debug!(?path, chapter_name, len_content, ?relative_path, "patching");
 
             let content = load_content_of_chapter(path, len_content * 2).await?;
-            let chapter = Chapter::new(chapter_name, content, relative_path, vec![]);
-            let mut patcher_book = Book::new();
-            patcher_book.sections = vec![BookItem::Chapter(chapter)];
-            book.book = patcher_book;
-            let (mut preprocessed_book, _) = block_in_place(|| book.preprocess_book(&RENDERER))?;
-
-            let markdown = match preprocessed_book.sections.pop() {
-                None => bail!("{:?} preprocessed to an empty book.", book.book),
-                Some(BookItem::Chapter(Chapter {
-                    content,
-                    source_path: Some(source_path),
-                    ..
-                })) if source_path == relative_path => content,
-                _ => bail!(
-                    "{:?} preprocessed to unexpected {preprocessed_book:?}",
-                    book.book
-                ),
-            };
-            patch_registry_ref
-                .cast(PatchRegistryRequest::NewPatch(
-                    relative_path.with_extension("html"),
-                    markdown,
-                ))
-                .await
-                .context("Updating the patch registry")?;
+            patch_chapter_w_content(
+                chapter_name,
+                content,
+                relative_path,
+                book,
+                patch_registry_ref,
+            )
+            .await?;
         }
 
         // NOTE: Not restoring if an error occurs,
@@ -257,6 +240,41 @@ impl HtmlHbsState {
         book.book = original_book_preserved;
         Ok(())
     }
+}
+
+pub async fn patch_chapter_w_content(
+    chapter_name: &str,
+    content: String,
+    relative_path: &Path,
+    book: &mut MDBook,
+    patch_registry_ref: &mut ActorRef<PatchRegistry>,
+) -> Result<()> {
+    // TODO: Spawn a tagged task instead of blocking the current one.
+    let chapter = Chapter::new(chapter_name, content, relative_path, vec![]);
+    let mut patcher_book = Book::new();
+    patcher_book.sections = vec![BookItem::Chapter(chapter)];
+    book.book = patcher_book;
+    let (mut preprocessed_book, _) = block_in_place(|| book.preprocess_book(&RENDERER))?;
+    let markdown = match preprocessed_book.sections.pop() {
+        None => bail!("{:?} preprocessed to an empty book.", book.book),
+        Some(BookItem::Chapter(Chapter {
+            content,
+            source_path: Some(source_path),
+            ..
+        })) if source_path == relative_path => content,
+        _ => bail!(
+            "{:?} preprocessed to unexpected {preprocessed_book:?}",
+            book.book
+        ),
+    };
+    patch_registry_ref
+        .cast(PatchRegistryRequest::NewPatch(
+            relative_path.with_extension("html"),
+            markdown,
+        ))
+        .await
+        .context("Updating the patch registry")?;
+    Ok(())
 }
 
 async fn load_content_of_chapter(path: &PathBuf, capacity: usize) -> io::Result<String> {

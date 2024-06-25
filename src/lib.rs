@@ -1,14 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use drop_this::*;
 use mdbook_incremental_preview::live_patching::*;
 use serde_json::Value;
 use tokio::{
     io::{stdin, stdout},
-    spawn,
     sync::mpsc,
-    task::JoinSet,
 };
 use tokio_gen_server::prelude::*;
 use tower_lsp::{LspService, Server};

@@ -91,7 +91,10 @@ impl LanguageServer for MDBookLS {
         info!(uri.path = uri.path(), language_id, version, "did_open");
         match (language_id.as_str(), uri2abs_file_path(&uri)) {
             ("markdown", Some(path)) => {
-                // TODO: Pause watching `path`.
+                let path = path.into();
+                let msg = LivePatcherInfo::Opened { path, version };
+                let task = self.live_patcher.cast(msg);
+                task.await.expect("LivePatcher died.");
             }
             ("markdown", _) => info!(uri.path = uri.path(), "Markdown but not a file!"),
             _ => {}
@@ -108,7 +111,13 @@ impl LanguageServer for MDBookLS {
         info!(uri.path = uri.path(), version, "did_change");
         match (content_changes.pop(), uri2abs_file_path(&uri)) {
             (Some(TextDocumentContentChangeEvent { text, .. }), Some(path)) => {
-                // TODO: Send (path, version, text).
+                let msg = LivePatcherInfo::ModifiedContent {
+                    path: path.into(),
+                    version,
+                    content: text,
+                };
+                let task = self.live_patcher.cast(msg);
+                task.await.expect("LivePatcher died.");
             }
             (Some(_), _) => info!(uri.path = uri.path(), "Not a file!"),
             _ => warn!("Empty content change!"),
@@ -129,7 +138,9 @@ impl LanguageServer for MDBookLS {
     ) {
         info!(uri.path = uri.path(), "did_close");
         if let Some(path) = uri2abs_file_path(&uri) {
-            // TODO: Resume watching `path`.
+            let msg = LivePatcherInfo::Closed(path.into());
+            let task = self.live_patcher.cast(msg);
+            task.await.expect("LivePatcher died.");
         }
     }
 
