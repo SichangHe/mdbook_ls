@@ -73,7 +73,8 @@ end
 
 Now, you would have two Vim commands:
 `MDBookLSOpenPreview` starts the preview and opens the browser;
-`MDBookLSStopPreview` stops updating or serving the preview.
+`MDBookLSStopPreview` stops updating the preview
+(Warp keeps serving on the port despite being cancelled).
 
 </details>
 

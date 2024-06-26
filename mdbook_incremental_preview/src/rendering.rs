@@ -249,11 +249,12 @@ pub async fn patch_chapter_w_content(
     book: &mut MDBook,
     patch_registry_ref: &mut ActorRef<PatchRegistry>,
 ) -> Result<()> {
-    // TODO: Spawn a tagged task instead of blocking the current one.
+    // TODO: Spawn tasks into `patch_join_sets` instead of blocking.
     let chapter = Chapter::new(chapter_name, content, relative_path, vec![]);
     let mut patcher_book = Book::new();
     patcher_book.sections = vec![BookItem::Chapter(chapter)];
     book.book = patcher_book;
+    // TODO: Inline this `preprocess_book` call.
     let (mut preprocessed_book, _) = block_in_place(|| book.preprocess_book(&RENDERER))?;
     let markdown = match preprocessed_book.sections.pop() {
         None => bail!("{:?} preprocessed to an empty book.", book.book),

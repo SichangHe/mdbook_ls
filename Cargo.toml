@@ -27,6 +27,7 @@ serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tokio_gen_server = "0.4"
+tokio_two_join_set = "0.0"
 tokio-util = "0.7"
 toml = "=0.5.11" # Do not update, see https://github.com/rust-lang/mdBook/issues/2037
 tower-lsp = "0.20"

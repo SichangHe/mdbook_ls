@@ -27,11 +27,7 @@ impl Actor for Rebuilder {
         match msg {
             RebuildInfo::Rebuild(reload) => {
                 info!(?self.build_dir, "Full rebuild.");
-                let join_set = &mut self.mutables.rebuild_join_set;
-                // Abort old tasks.
-                // TODO: Just use an `Option<ActorHandle>` instead.
-                join_set.abort_all();
-                join_set.spawn(load_book(
+                _ = self.mutables.rebuild_join_set.spawn(load_book(
                     self.book_root.clone(),
                     self.build_dir.clone(),
                     reload,
@@ -60,6 +56,9 @@ impl Actor for Rebuilder {
                 let m = &mut self.mutables;
                 (m.book, m.html_config, m.theme_dir, m.hbs_state) =
                     (book, html_config, theme_dir, hbs_state);
+                let paths = running_patch_join_sets(&self.mutables.patch_join_sets);
+                let (env, msg) = (env.clone(), RebuildInfo::ChangedPaths(paths));
+                spawn(async move { env.cast(msg).await.drop_result() });
             }
             RebuildInfo::ChangedPaths(paths) => {
                 info!(?paths, "Directories changed.");
@@ -120,8 +119,6 @@ impl Actor for Rebuilder {
                         ?relative_path,
                         "Patching with content."
                     );
-                    // TODO: Spawn this into `self.mutables.patch_join_set`
-                    // instead of blocking here.
                     if let Err(err) = patch_chapter_w_content(
                         chapter_name,
                         content,
@@ -237,8 +234,7 @@ impl Rebuilder {
                 .await
                 .context("The server is unavailable to receive info.")?;
             if let Some(serving_url) = mem::take(&mut m.serving_url) {
-                m.persistent_join_set
-                    .spawn_blocking(move || open(serving_url));
+                spawn_blocking(move || open(serving_url));
             }
         }
 
@@ -249,12 +245,9 @@ impl Rebuilder {
     }
 
     fn send_rebuild_info(&mut self, env: ActorRef<Self>, reload: bool) {
-        let task = async move {
+        spawn(async move {
             env.cast(RebuildInfo::Rebuild(reload)).await.drop_result();
-        };
-        let join_set = &mut self.mutables.persistent_join_set;
-        clean_up_join_set(join_set);
-        join_set.spawn(task);
+        });
     }
 
     pub fn new(
@@ -279,8 +272,15 @@ impl Rebuilder {
     }
 }
 
-fn clean_up_join_set<T: 'static>(join_set: &mut JoinSet<T>) {
-    while join_set.try_join_next().is_some() {}
+fn running_patch_join_sets(patch_join_sets: &Fearless<PatchJoinSets>) -> Vec<PathBuf> {
+    let mut patch_join_sets = patch_join_sets.lock().unwrap();
+    patch_join_sets
+        .drain()
+        .filter_map(|(path, mut join_set)| {
+            _ = join_set.try_join_both();
+            (!join_set.is_empty()).then_some(path)
+        })
+        .collect()
 }
 
 async fn load_book(book_root: PathBuf, build_dir: PathBuf, reload: bool, env: ActorRef<Rebuilder>) {
@@ -330,20 +330,22 @@ pub struct BookData {
     pub hbs_state: HtmlHbsState,
 }
 
+type Fearless<T> = Arc<Mutex<T>>;
+type PatchJoinSets = HashMap<PathBuf, TwoJoinSet<()>>;
+
 /// The mutable parts of [`Rebuilder`].
 #[derive(Default)]
 pub struct RebuilderMut {
-    pub serving_url: Option<String>,
-    pub _debouncer_to_keep_watcher_alive: Option<Debouncer<RecommendedWatcher>>,
-    pub book: MDBook,
-    pub file_404: PathBuf,
-    pub maybe_gitignore: Option<(Gitignore, PathBuf)>,
-    pub summary_md: PathBuf,
-    pub theme_dir: PathBuf,
-    pub html_config: HtmlConfig,
-    pub src_dir: PathBuf,
-    pub extra_watch_dirs: Vec<PathBuf>,
-    pub hbs_state: HtmlHbsState,
-    pub rebuild_join_set: JoinSet<()>,
-    pub persistent_join_set: JoinSet<()>,
+    serving_url: Option<String>,
+    _debouncer_to_keep_watcher_alive: Option<Debouncer<RecommendedWatcher>>,
+    book: MDBook,
+    maybe_gitignore: Option<(Gitignore, PathBuf)>,
+    summary_md: PathBuf,
+    theme_dir: PathBuf,
+    html_config: HtmlConfig,
+    src_dir: PathBuf,
+    hbs_state: HtmlHbsState,
+    rebuild_join_set: TwoJoinSet<()>,
+    /// [`TwoJoinSet`]s of each patched chapter's relative path.
+    patch_join_sets: Fearless<PatchJoinSets>,
 }

@@ -5,12 +5,13 @@ use std::{
     io, iter, mem,
     net::SocketAddr,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
 use anyhow::{bail, Context};
 use drop_this::*;
-use futures_util::sink::SinkExt;
+use futures_util::{sink::SinkExt, StreamExt};
 use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
 use mdbook::{
@@ -36,10 +37,11 @@ use tokio::{
     io::AsyncReadExt,
     select, spawn,
     sync::{mpsc, oneshot, watch},
-    task::{block_in_place, spawn_blocking, yield_now, JoinHandle, JoinSet},
+    task::{block_in_place, spawn_blocking, yield_now, JoinHandle},
     time::timeout,
 };
 use tokio_gen_server::prelude::*;
+use tokio_two_join_set::TwoJoinSet;
 use tracing::*;
 use warp::{
     filters::{
