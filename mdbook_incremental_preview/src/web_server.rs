@@ -4,7 +4,7 @@ pub async fn serve_reloading(
     book_root: PathBuf,
     address: SocketAddr,
     build_dir: PathBuf,
-    file_event_tx: mpsc::Sender<Vec<PathBuf>>,
+    rebuilder_ref: ActorRef<Rebuilder>,
     mut info_rx: mpsc::Receiver<ServeInfo>,
     patch_registry_ref: ActorRef<PatchRegistry>,
 ) {
@@ -16,7 +16,7 @@ pub async fn serve_reloading(
     let mut info_buf = Vec::new();
     loop {
         let maybe_maybe_info = select! {
-            _ = serve(book_root.clone(), build_dir.clone(), address, file_event_tx.clone(), info.clone(), patch_registry_ref.clone()) => None,
+            _ = serve(book_root.clone(), build_dir.clone(), address, rebuilder_ref.clone(), info.clone(), patch_registry_ref.clone()) => None,
             maybe_info = info_rx.recv() => Some(maybe_info),
         };
         match maybe_maybe_info {
@@ -50,7 +50,7 @@ pub async fn serve(
     book_root: PathBuf,
     build_dir: PathBuf,
     address: SocketAddr,
-    file_event_tx: mpsc::Sender<Vec<PathBuf>>,
+    rebuilder_ref: ActorRef<Rebuilder>,
     info: ServeInfo,
     patch_registry_ref: ActorRef<PatchRegistry>,
 ) {
@@ -78,17 +78,10 @@ pub async fn serve(
             })
         });
 
-    let summary_md = Arc::new(src_dir.join("SUMMARY.md"));
     let build_artifact = warp::get()
         // Check if the path has a patch.
         .and(warp::path::full())
-        .and(warp::get().map(move || {
-            (
-                patch_registry_ref.clone(),
-                file_event_tx.clone(),
-                summary_md.clone(),
-            )
-        }))
+        .and(warp::get().map(move || (patch_registry_ref.clone(), rebuilder_ref.clone())))
         .and_then(filter_patched_path)
         .untuple_one()
         .and(warp::fs::dir(build_dir.clone()));
@@ -118,13 +111,7 @@ pub async fn serve(
         .or(no_copy_files_except_ext)
         .or(fallback_route);
 
-    std::panic::set_hook(Box::new(move |panic_info| {
-        // exit if serve panics
-        error!("Unable to serve: {}", panic_info);
-        std::process::exit(1);
-    }));
-
-    warp::serve(routes).run(address).await;
+    warp::serve(routes).try_bind(address).await;
 }
 
 /// Handle live patching at the canonical `path` that may start with `/`,
@@ -132,7 +119,7 @@ pub async fn serve(
 async fn handle_ws(
     path: &str,
     ws: &mut WebSocket,
-    mut patch_registry_ref: ActorRef<PatchRegistry>,
+    patch_registry_ref: ActorRef<PatchRegistry>,
 ) -> Result<()> {
     let path = Path::new(path.trim_start_matches('/'));
     info!(?path, "WebSocket connection.");
@@ -144,24 +131,28 @@ async fn handle_ws(
         bail!("Unexpected response calling PatchRegistry: {response:?}.");
     };
 
+    if !watch_receiver.borrow_and_update().is_empty() {
+        // Send the existing patch.
+        watch_receiver.mark_changed();
+    }
     while watch_receiver.changed().await.is_ok() {
         let patch = { watch_receiver.borrow_and_update().clone() };
-        ws.send(Message::text(patch))
-            .await
-            .with_context(|| format!("Sending patch update to WebSocket at {path:?}."))?;
+        if let Err(err) = ws.send(Message::text(patch)).await {
+            info!(
+                ?err,
+                ?path,
+                "Patch update did not deliver. Closing WebSocket."
+            );
+            return Ok(());
+        }
         debug!("Sent patch update to WebSocket at {path:?}.");
     }
-    // The patch sender is dropped, signaling a full rebuild.
     Ok(())
 }
 
 async fn filter_patched_path(
     full_path: FullPath,
-    (mut patch_registry_ref, file_event_tx, summary_md): (
-        ActorRef<PatchRegistry>,
-        mpsc::Sender<Vec<PathBuf>>,
-        Arc<PathBuf>,
-    ),
+    (patch_registry_ref, rebuilder_ref): (ActorRef<PatchRegistry>, ActorRef<Rebuilder>),
 ) -> Result<(), warp::reject::Rejection> {
     let path = full_path.as_str().trim_start_matches('/');
     match patch_registry_ref
@@ -174,8 +165,8 @@ async fn filter_patched_path(
                     path,
                     "Client requested patched path. Issuing a full rebuild."
                 );
-                file_event_tx
-                    .send(vec![summary_md.to_path_buf()])
+                rebuilder_ref
+                    .cast(RebuildInfo::Rebuild(false))
                     .await
                     .drop_result();
             }

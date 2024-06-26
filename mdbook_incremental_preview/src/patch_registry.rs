@@ -5,7 +5,12 @@ use super::*;
 /// A registry of watch channel senders of patches for paths.
 #[derive(Default)]
 pub struct PatchRegistry {
-    patches: HashMap<PathBuf, watch::Sender<String>>,
+    /// Preprocessed markdown content and watch channel for
+    /// HTML `<main>` body content of each patched path.
+    patches: HashMap<PathBuf, (String, watch::Sender<String>)>,
+    /// Relative HTTP path of the index chapter.
+    index_path: Option<PathBuf>,
+    smart_punctuation: bool,
 }
 
 impl Actor for PatchRegistry {
@@ -15,22 +20,40 @@ impl Actor for PatchRegistry {
 
     async fn handle_cast(&mut self, msg: Self::T, _env: &mut ActorRef<Self>) -> Result<()> {
         match msg {
-            PatchRegistryRequest::NewPatch(path, patch) => {
+            PatchRegistryRequest::NewPatch(path, new_markdown) => {
                 debug!(?path, "Registry received patch.");
                 match self.patches.entry(path) {
                     // Entry exists,
                     // update the patch in-place and send watch updates.
                     Entry::Occupied(mut entry) => {
-                        let sender = entry.get_mut();
+                        let (markdown, sender) = entry.get_mut();
                         // Update the patch only if it changed.
-                        if *sender.borrow() != patch {
+                        if *markdown != new_markdown {
                             debug!("Updating patch in registry.");
-                            sender.send_modify(|old_patch| *old_patch = patch);
+                            let new_html = block_in_place(|| {
+                                utils::render_markdown(&new_markdown, self.smart_punctuation)
+                            });
+                            sender.send_modify(|html| *html = new_html);
                         }
                     }
                     // New entry, register the patch and a new watch channel.
-                    Entry::Vacant(entry) => _ = entry.insert(watch::channel(patch).0),
+                    Entry::Vacant(entry) => {
+                        _ = entry.insert((Default::default(), watch::channel(new_markdown).0))
+                    }
                 };
+            }
+            PatchRegistryRequest::Rebuild {
+                index_path,
+                smart_punctuation,
+            } => {
+                for (_, (_, watcher)) in self.patches.drain() {
+                    watcher.send_modify(|v| *v = "__RELOAD".into())
+                }
+                self.smart_punctuation = smart_punctuation;
+                if let Some(index_path) = index_path {
+                    self.index_path = Some(index_path.with_extension("html"));
+                    debug!(?self.index_path, ?self.smart_punctuation, "Updated index path in patch registry.")
+                }
             }
             PatchRegistryRequest::Clear => self.patches.clear(),
         }
@@ -43,13 +66,15 @@ impl Actor for PatchRegistry {
         _env: &mut ActorRef<Self>,
         response_sender: oneshot::Sender<Self::R>,
     ) -> Result<()> {
+        debug!(?msg, "PatchRegistry::handle_call");
         match msg {
             PatchRegistryQuery::Watch(path) => {
+                let path = self.resolve_index_path(path).into_owned();
                 let watch_receiver = match self.patches.entry(path) {
-                    Entry::Occupied(entry) => entry.get().subscribe(),
+                    Entry::Occupied(entry) => entry.get().1.subscribe(),
                     Entry::Vacant(entry) => {
                         let (sender, receiver) = watch::channel(Default::default());
-                        entry.insert(sender);
+                        entry.insert((Default::default(), sender));
                         receiver
                     }
                 };
@@ -58,7 +83,8 @@ impl Actor for PatchRegistry {
                     .drop_result();
             }
             PatchRegistryQuery::GetHasPatch(path) => {
-                let has_patch = self.patches.contains_key(&path);
+                let path = self.resolve_index_path(path);
+                let has_patch = self.patches.contains_key(path.as_path());
                 response_sender
                     .send(PatchRegistryResponse::HasPatch(has_patch))
                     .drop_result();
@@ -71,9 +97,14 @@ impl Actor for PatchRegistry {
 /// A request to modify the patch registry.
 #[derive(Debug)]
 pub enum PatchRegistryRequest {
-    /// Register a new patch.
+    /// Register a new patch with the preprocessed Markdown content.
     NewPatch(PathBuf, String),
-    /// Clear the registry.
+    /// The book is rebuilt, with an optional new index path.
+    Rebuild {
+        index_path: Option<PathBuf>,
+        smart_punctuation: bool,
+    },
+    /// Clear the registry, like a soft shutdown.
     Clear,
 }
 
@@ -93,4 +124,14 @@ pub enum PatchRegistryResponse {
     WatchReceiver(watch::Receiver<String>),
     /// If a path has patches.
     HasPatch(bool),
+}
+
+impl PatchRegistry {
+    /// Convert HTTP `path` to the index path if it is the path to root.
+    fn resolve_index_path(&self, path: PathBuf) -> Cow<'_, PathBuf> {
+        match &self.index_path {
+            Some(index_path) if path == PathBuf::new() => Cow::Borrowed(index_path),
+            _ => Cow::Owned(path),
+        }
+    }
 }

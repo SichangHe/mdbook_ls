@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, optional = true }
+drop_this.workspace = true
 futures-util.workspace = true
 handlebars.workspace = true
 ignore.workspace = true

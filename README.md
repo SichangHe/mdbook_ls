@@ -1,8 +1,93 @@
 # mdBook Language Server
 
 WIP.
-The goal of mdBook LS is to provide a language server to
-preview mdBook projects live.
+
+mdBook-LS provides a language server to preview mdBook projects live,
+patching the edited chapter instantly as you type in your editor.
+Please see [Editor Setup](#editor-setup) for details on usage.
+
+## Editor Setup
+
+<details>
+<summary>✅ NeoVim setup with LSPConfig</summary>
+
+The plan is to merge this into [nvim-lspconfig].
+
+Before that happens,
+please paste the below `mdbook_ls_setup` function somewhere in
+your configuration files and [call it with your client's
+`capabilities`](https://github.com/SichangHe/.config/blob/ed7b2e2b5f2a0876ded985e345f2dc20ca2c1017/nvim/lua/plugins/lsp.lua#L259).
+
+```lua
+local function mdbook_ls_setup(capabilities)
+    local lspconfig = require('lspconfig')
+    local function execute_command_with_params(params)
+        local clients = lspconfig.util.get_lsp_clients {
+            bufnr = vim.api.nvim_get_current_buf(),
+            name = 'mdbook_ls',
+        }
+        for _, client in ipairs(clients) do
+            client.request('workspace/executeCommand', params, nil, 0)
+        end
+    end
+    local function open_preview()
+        local params = {
+            command = 'open_preview',
+            arguments = { vim.uri_from_bufnr(0), true },
+        }
+        execute_command_with_params(params)
+    end
+    local function stop_preview()
+        local params = {
+            command = 'stop_preview',
+            arguments = {},
+        }
+        execute_command_with_params(params)
+    end
+
+    require('lspconfig.configs')['mdbook_ls'] = {
+        default_config = {
+            cmd = { 'mdbook-ls' },
+            filetypes = { 'markdown' },
+            root_dir = lspconfig.util.root_pattern('book.toml'),
+        },
+        commands = {
+            MDBookLSOpenPreview = {
+                open_preview,
+                description = 'Open MDBook-LS preview',
+            },
+            MDBookLSStopPreview = {
+                stop_preview,
+                description = 'Stop MDBook-LS preview',
+            },
+        },
+        docs = {
+            description = [[TODO]],
+        },
+    }
+    lspconfig['mdbook_ls'].setup {
+        capabilities = capabilities,
+    }
+end
+```
+
+Now, you would have two Vim commands:
+`MDBookLSOpenPreview` starts the preview and opens the browser;
+`MDBookLSStopPreview` stops updating or serving the preview.
+
+</details>
+
+<details>
+<summary>❌ Visual Studio Code setup</summary>
+
+I do not currently use VSCode,
+do not plan to go through Microsoft's hoops to make an official plugin,
+and do not wish to maintain such plugins.
+If you use both VSCode and mdBook-LS,
+please feel free to make a VSCode plugin yourself and create an issue so
+I can link your plugin here.
+
+</details>
 
 ## mdBook Incremental Preview
 
@@ -89,6 +174,7 @@ Please configure the log level by setting the `RUST_LOG` environment variable.
 
 [^tracing-env-filter]: <https://docs.rs/tracing-subscriber/latest/tracing_subscriber/#feature-flags>
 
+[client-side KaTeX]: https://katex.org/docs/browser.html
 [load-event]: https://developer.mozilla.org/en-US/docs/Web/API/Window/load_event
 [mdBook-KaTeX]: https://github.com/lzanini/mdbook-katex
-[client-side KaTeX]: https://katex.org/docs/browser.html
+[nvim-lspconfig]: https://github.com/neovim/nvim-lspconfig
