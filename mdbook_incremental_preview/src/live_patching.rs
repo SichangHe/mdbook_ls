@@ -72,19 +72,17 @@ impl LivePatcher {
         self.maybe_stop_web_server();
         if let Some(handle) = mem::take(&mut self.server) {
             handle.await.drop_result();
-            // FIXME: The web server does not really stop.
-            // Warp keeps its threads alive in the background.
         }
         if let Some((handle, actor_ref)) = mem::take(&mut self.rebuilder) {
-            actor_ref.cancel();
-            if let Err(err) = try_join_actor_handle(handle).await {
-                error!(?err, "joininig the Rebuilder's handle.");
-            }
+            let msg = "shutting down the Rebuilder.";
+            shut_down_actor_n_log_err::<Rebuilder>(handle, actor_ref, msg).await;
         }
-        if let Some((handle, actor_ref)) = mem::take(&mut self.patch_registry) {
-            actor_ref.cancel();
-            if let Err(err) = try_join_actor_handle(handle).await {
-                error!(?err, "joininig the PatchRegistry's handle.");
+        if let Some((_, actor_ref)) = &self.patch_registry {
+            if let Err(err) = actor_ref.cast(PatchRegistryRequest::Clear).await {
+                warn!(?err, "PatchRegistry died. Marking it dead.");
+                let (handle, actor_ref) = mem::take(&mut self.patch_registry).unwrap();
+                let msg = "shutting down the PatchRegistry.";
+                shut_down_actor_n_log_err::<PatchRegistry>(handle, actor_ref, msg).await;
             }
         }
     }
@@ -199,6 +197,10 @@ impl Actor for LivePatcher {
         _msg_receiver: &mut mpsc::Receiver<ActorMsg<Self>>,
     ) -> Result<()> {
         self.stop().await;
+        if let Some((handle, actor_ref)) = mem::take(&mut self.patch_registry) {
+            let msg = "shutting down the PatchRegistry.";
+            shut_down_actor_n_log_err::<PatchRegistry>(handle, actor_ref, msg).await;
+        }
         run_result
     }
 }

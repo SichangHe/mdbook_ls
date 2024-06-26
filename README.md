@@ -15,10 +15,11 @@ The plan is to merge this into [nvim-lspconfig].
 
 Before that happens,
 please paste the below `mdbook_ls_setup` function somewhere in
-your configuration files and call it with your client's `capabilities`.
+your configuration files and [call it with your client's
+`capabilities`](https://github.com/SichangHe/.config/blob/ed7b2e2b5f2a0876ded985e345f2dc20ca2c1017/nvim/lua/plugins/lsp.lua#L259).
 
 ```lua
-function mdbook_ls_setup(capabilities)
+local function mdbook_ls_setup(capabilities)
     local lspconfig = require('lspconfig')
     local function execute_command_with_params(params)
         local clients = lspconfig.util.get_lsp_clients {
@@ -72,9 +73,7 @@ end
 
 Now, you would have two Vim commands:
 `MDBookLSOpenPreview` starts the preview and opens the browser;
-`MDBookLSStopPreview` stops updating the preview
-(we are unable to stop the web server,
-seemingly because of Warp's limitations).
+`MDBookLSStopPreview` stops updating or serving the preview.
 
 </details>
 

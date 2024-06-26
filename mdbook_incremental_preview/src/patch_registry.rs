@@ -42,17 +42,20 @@ impl Actor for PatchRegistry {
                     }
                 };
             }
-            PatchRegistryRequest::Clear {
+            PatchRegistryRequest::Rebuild {
                 index_path,
                 smart_punctuation,
             } => {
-                self.patches.clear();
+                for (_, (_, watcher)) in self.patches.drain() {
+                    watcher.send_modify(|v| *v = "__RELOAD".into())
+                }
                 self.smart_punctuation = smart_punctuation;
                 if let Some(index_path) = index_path {
                     self.index_path = Some(index_path.with_extension("html"));
                     debug!(?self.index_path, ?self.smart_punctuation, "Updated index path in patch registry.")
                 }
             }
+            PatchRegistryRequest::Clear => self.patches.clear(),
         }
         Ok(())
     }
@@ -96,11 +99,13 @@ impl Actor for PatchRegistry {
 pub enum PatchRegistryRequest {
     /// Register a new patch with the preprocessed Markdown content.
     NewPatch(PathBuf, String),
-    /// Clear the registry, with an optional new index path.
-    Clear {
+    /// The book is rebuilt, with an optional new index path.
+    Rebuild {
         index_path: Option<PathBuf>,
         smart_punctuation: bool,
     },
+    /// Clear the registry, like a soft shutdown.
+    Clear,
 }
 
 /// A query for the patch registry.

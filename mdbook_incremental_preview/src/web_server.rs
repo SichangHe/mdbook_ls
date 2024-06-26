@@ -111,13 +111,7 @@ pub async fn serve(
         .or(no_copy_files_except_ext)
         .or(fallback_route);
 
-    std::panic::set_hook(Box::new(move |panic_info| {
-        // exit if serve panics
-        error!("Unable to serve: {}", panic_info);
-        std::process::exit(1);
-    }));
-
-    warp::serve(routes).run(address).await;
+    warp::serve(routes).try_bind(address).await;
 }
 
 /// Handle live patching at the canonical `path` that may start with `/`,
@@ -153,8 +147,6 @@ async fn handle_ws(
         }
         debug!("Sent patch update to WebSocket at {path:?}.");
     }
-    // The patch sender is dropped, signaling a full rebuild.
-    ws.send(Message::text("__RELOAD")).await.drop_result();
     Ok(())
 }
 

@@ -47,7 +47,7 @@ impl Actor for Rebuilder {
                     hbs_state,
                 } = *data;
                 self.patch_registry_ref
-                    .cast(PatchRegistryRequest::Clear {
+                    .cast(PatchRegistryRequest::Rebuild {
                         index_path: hbs_state.index_path.clone(),
                         smart_punctuation: hbs_state.smart_punctuation,
                     })

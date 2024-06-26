@@ -92,6 +92,17 @@ pub async fn live_patch_continuously(
     Ok(())
 }
 
+async fn shut_down_actor_n_log_err<A: Actor>(
+    handle: ActorHandle<ActorMsg<A>>,
+    actor_ref: ActorRef<A>,
+    err_msg: &'static str,
+) {
+    actor_ref.cancel();
+    if let Err(err) = try_join_actor_handle(handle).await {
+        error!(?err, err_msg);
+    }
+}
+
 async fn try_join_actor_handle<T>(handle: ActorHandle<T>) -> Result<()> {
     handle.await?.1
 }
