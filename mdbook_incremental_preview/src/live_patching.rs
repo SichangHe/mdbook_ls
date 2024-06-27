@@ -4,7 +4,7 @@ pub struct LivePatcher {
     build_temp_dir: TempDir,
     book_root: PathBuf,
     socket_address: SocketAddr,
-    open_preview: bool,
+    open_browser_at: Option<PathBuf>,
     versions: HashMap<PathBuf, i32>,
     patch_registry: Option<(
         ActorHandle<ActorMsg<PatchRegistry>>,
@@ -20,7 +20,7 @@ impl LivePatcher {
             build_temp_dir: tempdir()?,
             book_root: Default::default(),
             socket_address: ([127, 0, 0, 1], 3000).into(),
-            open_preview: true,
+            open_browser_at: Some("".into()),
             versions: Default::default(),
             patch_registry: None,
             rebuilder: None,
@@ -31,24 +31,26 @@ impl LivePatcher {
     /// This function does not check if the actors and
     /// tasks have already been started;
     /// the caller is responsible for stopping them.
-    fn start(&mut self, env: &ActorRef<Self>) {
-        let serving_url = self.serving_url();
+    async fn start(&mut self, env: &ActorRef<Self>) {
         let (info_tx, info_rx) = mpsc::channel(8);
-        info!(?serving_url, "Starting live patching.");
+        info!(?self.socket_address, ?self.open_browser_at, "Starting live patching.");
 
         let rebuilder = Rebuilder::new(
             self.book_root.clone(),
             self.build_dir().to_owned(),
+            self.socket_address,
             info_tx.clone(),
             self.get_or_make_patch_registry(env),
-            serving_url,
+            self.open_browser_at.take(),
         );
+        yield_now().await;
         let (handle, rebuilder_ref) =
             rebuilder.spawn_with_token(env.cancellation_token.child_token());
         self.rebuilder = Some((handle, rebuilder_ref.clone()));
 
         // TODO: Rid `serve_reloading` and combine the functionality into
         // `LivePatcher`.
+        yield_now().await;
         self.server = Some(spawn(serve_reloading(
             self.book_root.clone(),
             self.socket_address,
@@ -56,12 +58,7 @@ impl LivePatcher {
             rebuilder_ref,
             info_rx,
             self.get_or_make_patch_registry(env),
-        )))
-    }
-
-    fn serving_url(&self) -> Option<String> {
-        self.open_preview
-            .then(|| format!("http://{}", self.socket_address))
+        )));
     }
 
     fn build_dir(&self) -> &Path {
@@ -121,22 +118,25 @@ impl Actor for LivePatcher {
                 if self.rebuilder.is_some() {
                     info!("Restarting live patching.");
                     self.stop().await;
-                    self.start(env);
+                    self.start(env).await;
                 }
             }
-            LivePatcherInfo::OpenPreview(options) => {
-                debug!(?options, "Opening preview.");
-                if let Some((socket_address, open_preview)) = options {
-                    (self.socket_address, self.open_preview) = (socket_address, open_preview);
-                }
-                match self.rebuilder {
-                    Some(_) => {
+            LivePatcherInfo::OpenPreview {
+                socket_address,
+                open_browser_at,
+            } => {
+                debug!(?socket_address, ?open_browser_at, "Opening preview.");
+                _ = socket_address.map(|v| self.socket_address = v);
+                _ = open_browser_at.map(|v| self.open_browser_at = Some(v));
+                match &self.rebuilder {
+                    Some((_, ref_)) => {
                         info!("Already started live patching; not restarting.");
-                        if let Some(serving_url) = self.serving_url() {
-                            spawn_blocking(|| open(serving_url));
+                        if let Some(open_browser_at) = mem::take(&mut self.open_browser_at) {
+                            let msg = RebuildInfo::OpenBrowser(open_browser_at);
+                            ref_.cast(msg).await.drop_result();
                         }
                     }
-                    None => self.start(env),
+                    None => self.start(env).await,
                 }
             }
             LivePatcherInfo::StopPreview => {
@@ -209,8 +209,11 @@ impl Actor for LivePatcher {
 pub enum LivePatcherInfo {
     /// Update the book root.
     BookRoot(PathBuf),
-    /// Open preview at the socket address and if open the browser.
-    OpenPreview(Option<(SocketAddr, bool)>),
+    OpenPreview {
+        socket_address: Option<SocketAddr>,
+        /// Absolute path of the chapter file to open the browser at.
+        open_browser_at: Option<PathBuf>,
+    },
     /// Stop the preview server.
     StopPreview,
     /// Opened path.

@@ -90,7 +90,10 @@ pub async fn live_patch_continuously(
     let live_patcher = LivePatcher::try_new()?;
     let (handle, actor_ref) = live_patcher.spawn();
     actor_ref.cast(LivePatcherInfo::BookRoot(book_root)).await?;
-    let msg = LivePatcherInfo::OpenPreview(Some((socket_address, open_browser)));
+    let msg = LivePatcherInfo::OpenPreview {
+        socket_address: Some(socket_address),
+        open_browser_at: open_browser.then_some("".into()),
+    };
     actor_ref.cast(msg).await?;
     try_join_actor_handle(handle).await?;
     Ok(())

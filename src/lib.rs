@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use mdbook_incremental_preview::live_patching::*;

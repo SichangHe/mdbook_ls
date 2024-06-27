@@ -55,8 +55,7 @@ impl LanguageServer for MDBookLS {
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<Value>> {
         match params.command.as_str() {
             "open_preview" => {
-                // TODO: Extract the arguments.
-                let open_msg = LivePatcherInfo::OpenPreview(None);
+                let open_msg = open_params(params);
                 self.live_patcher
                     .cast(open_msg)
                     .await
@@ -147,6 +146,22 @@ impl LanguageServer for MDBookLS {
     async fn shutdown(&self) -> Result<()> {
         self.live_patcher.cancel();
         Ok(())
+    }
+}
+
+fn open_params(params: ExecuteCommandParams) -> LivePatcherInfo {
+    let mut args = params.arguments.into_iter();
+    let socket_address = args.next().and_then(|v| {
+        v.as_str().and_then(|s| {
+            s.parse::<SocketAddr>()
+                .map_err(|err| error!(?err, ?s, "Parsing socket address in open params."))
+                .ok()
+        })
+    });
+    let open_browser_at = args.next().and_then(|v| v.as_str().map(PathBuf::from));
+    LivePatcherInfo::OpenPreview {
+        socket_address,
+        open_browser_at,
     }
 }
 

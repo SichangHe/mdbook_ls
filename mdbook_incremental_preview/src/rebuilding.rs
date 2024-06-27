@@ -6,6 +6,7 @@ use super::*;
 pub struct Rebuilder {
     book_root: PathBuf,
     build_dir: PathBuf,
+    socket_address: SocketAddr,
     info_tx: mpsc::Sender<ServeInfo>,
     patch_registry_ref: ActorRef<PatchRegistry>,
     book_toml: PathBuf,
@@ -109,6 +110,10 @@ impl Actor for Rebuilder {
                     _ = m.patch_join_sets.entry(path).or_default().spawn(task);
                 }
             }
+            RebuildInfo::OpenBrowser(path) => {
+                self.mutables.open_browser_at = Some(path);
+                self.maybe_open_browser();
+            }
         }
         Ok(())
     }
@@ -123,6 +128,8 @@ pub enum RebuildInfo {
     ChangedPaths(Vec<PathBuf>),
     /// Content of a modified path.
     ModifiedContent { path: PathBuf, content: String },
+    /// Open the browser for the chapter of the given absolute path.
+    OpenBrowser(PathBuf),
 }
 
 impl Rebuilder {
@@ -210,15 +217,13 @@ impl Rebuilder {
                     file_404: file_404.clone(),
                 })
                 .await
-                .context("The server is unavailable to receive info.")?;
-            if let Some(serving_url) = mem::take(&mut m.serving_url) {
-                spawn_blocking(move || open(serving_url));
-            }
+                .context("The web server is unavailable to receive info.")?;
         }
 
         if src_dir_changed {
             (m.summary_md, m.src_dir) = (src_dir.join("SUMMARY.md"), src_dir);
         }
+        self.maybe_open_browser();
         Ok(())
     }
 
@@ -228,22 +233,39 @@ impl Rebuilder {
         });
     }
 
+    fn maybe_open_browser(&mut self) {
+        let m = &mut self.mutables;
+        if m.summary_md != PathBuf::default() {
+            // We have done at least one rebuild.
+            if let Some(path) = mem::take(&mut m.open_browser_at) {
+                let path = path
+                    .strip_prefix(&m.src_dir)
+                    .unwrap_or(&path)
+                    .with_extension("html");
+                let address = format!("http://{}/{}", self.socket_address, path.display());
+                spawn_blocking(move || open(address));
+            }
+        }
+    }
+
     pub fn new(
         book_root: PathBuf,
         build_dir: PathBuf,
+        socket_address: SocketAddr,
         info_tx: mpsc::Sender<ServeInfo>,
         patch_registry_ref: ActorRef<PatchRegistry>,
-        serving_url: Option<String>,
+        open_browser_at: Option<PathBuf>,
     ) -> Self {
         let book_toml = book_root.join("book.toml");
         Self {
             book_root,
             build_dir,
+            socket_address,
             info_tx,
             patch_registry_ref,
             book_toml,
             mutables: RebuilderMut {
-                serving_url,
+                open_browser_at,
                 ..Default::default()
             },
         }
@@ -334,7 +356,7 @@ pub type PatchJoinSets = HashMap<PathBuf, TwoJoinSet<()>>;
 /// The mutable parts of [`Rebuilder`].
 #[derive(Default)]
 pub struct RebuilderMut {
-    serving_url: Option<String>,
+    open_browser_at: Option<PathBuf>,
     _debouncer_to_keep_watcher_alive: Option<Debouncer<RecommendedWatcher>>,
     book: Arc<MDBookCore>,
     maybe_gitignore: Option<(Gitignore, PathBuf)>,

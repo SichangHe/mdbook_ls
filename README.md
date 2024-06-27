@@ -33,7 +33,7 @@ local function mdbook_ls_setup(capabilities)
     local function open_preview()
         local params = {
             command = 'open_preview',
-            arguments = { vim.uri_from_bufnr(0), true },
+            arguments = { "127.0.0.1:33000", vim.api.nvim_buf_get_name(0) },
         }
         execute_command_with_params(params)
     end
@@ -72,9 +72,10 @@ end
 ```
 
 Now, you would have two Vim commands:
-`MDBookLSOpenPreview` starts the preview and opens the browser;
+`MDBookLSOpenPreview` starts the preview (if not already started)
+and opens the browser at the chapter you are editing;
 `MDBookLSStopPreview` stops updating the preview
-(Warp keeps serving on the port despite being cancelled).
+(Warp may keep serving on the port despite being cancelled).
 
 </details>
 
