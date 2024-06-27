@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Default)]
 pub struct HtmlHbsState {
+    // TODO: Arc both key and value.
     pub path2ctxs: HashMap<PathBuf, CtxCore>,
     pub smart_punctuation: bool,
     /// Relative path of the source file of the index chapter.
@@ -204,46 +205,88 @@ impl HtmlHbsState {
     /// any context of other chapters in the book,
     /// so preprocessors that operate across multiple book items are
     /// not supported.
-    pub async fn patch<'i, I: IntoIterator<Item = &'i PathBuf>>(
+    pub async fn patch<I: IntoIterator<Item = PathBuf>>(
         &self,
-        book: &MDBookCore,
+        book: &Arc<MDBookCore>,
         src_dir: &Path,
         paths: I,
-        patch_registry_ref: &mut ActorRef<PatchRegistry>,
-    ) -> Result<()> {
+        patch_registry_ref: &ActorRef<PatchRegistry>,
+        patch_join_sets: &mut PatchJoinSets,
+    ) {
         for path in paths.into_iter() {
-            let Some(CtxCore {
-                chapter_name,
-                len_content,
-            }) = self.path2ctxs.get(path)
-            else {
-                continue;
+            if let Some(ctx) = self.path2ctxs.get(&path) {
+                let task = patch_chapter(
+                    path.clone(),
+                    ctx.clone(),
+                    book.clone(),
+                    src_dir.into(),
+                    patch_registry_ref.clone(),
+                );
+                _ = patch_join_sets.entry(path).or_default().spawn(task);
             };
-            let relative_path = path.strip_prefix(src_dir)?;
-            debug!(?path, chapter_name, len_content, ?relative_path, "patching");
-
-            let content = load_content_of_chapter(path, len_content * 2).await?;
-            patch_chapter_w_content(
-                chapter_name,
-                content,
-                relative_path,
-                book,
-                patch_registry_ref,
-            )
-            .await?;
         }
-        Ok(())
     }
 }
 
-pub async fn patch_chapter_w_content(
+pub async fn patch_chapter(
+    path: PathBuf,
+    CtxCore {
+        chapter_name,
+        len_content,
+    }: CtxCore,
+    book: Arc<MDBookCore>,
+    src_dir: PathBuf,
+    patch_registry_ref: ActorRef<PatchRegistry>,
+) {
+    let task = try_patch_chapter(
+        &path,
+        &chapter_name,
+        len_content,
+        &src_dir,
+        &book,
+        &patch_registry_ref,
+    );
+    if let Err(err) = task.await {
+        error!(?err, ?path, chapter_name, "Patching chapter.");
+    }
+}
+
+pub async fn try_patch_chapter(
+    path: &PathBuf,
+    chapter_name: &str,
+    len_content: usize,
+    src_dir: &PathBuf,
+    book: &MDBookCore,
+    patch_registry_ref: &ActorRef<PatchRegistry>,
+) -> Result<()> {
+    let content = load_content_of_chapter(path, len_content * 2).await?;
+    try_patch_chapter_w_content(
+        path,
+        src_dir,
+        chapter_name,
+        content,
+        book,
+        patch_registry_ref,
+    )
+    .await
+}
+
+pub async fn try_patch_chapter_w_content(
+    path: &PathBuf,
+    src_dir: &PathBuf,
     chapter_name: &str,
     content: String,
-    relative_path: &Path,
     book: &MDBookCore,
-    patch_registry_ref: &mut ActorRef<PatchRegistry>,
+    patch_registry_ref: &ActorRef<PatchRegistry>,
 ) -> Result<()> {
-    // TODO: Spawn tasks into `patch_join_sets` instead of blocking.
+    let relative_path = path.strip_prefix(src_dir)?;
+    debug!(
+        ?path,
+        chapter_name,
+        ?relative_path,
+        "Patching with content.",
+    );
+    yield_now().await;
     let chapter = Chapter::new(chapter_name, content, relative_path, vec![]);
     let mut patcher_book = Book::new();
     patcher_book.sections = vec![BookItem::Chapter(chapter)];

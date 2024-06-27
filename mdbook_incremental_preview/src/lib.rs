@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use drop_this::*;
-use futures_util::{sink::SinkExt, StreamExt};
+use futures_util::sink::SinkExt;
 use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
 use mdbook::{

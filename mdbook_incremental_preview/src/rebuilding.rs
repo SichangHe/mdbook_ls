@@ -56,7 +56,8 @@ impl Actor for Rebuilder {
                 let m = &mut self.mutables;
                 (m.book, m.html_config, m.theme_dir, m.hbs_state) =
                     (Arc::new(book), html_config, theme_dir, hbs_state);
-                let paths = running_patch_join_sets(&self.mutables.patch_join_sets);
+                // Re-patch the chapters patched after a rebuild.
+                let paths = running_patch_join_sets(&mut m.patch_join_sets);
                 let (env, msg) = (env.clone(), RebuildInfo::ChangedPaths(paths));
                 spawn(async move { env.cast(msg).await.drop_result() });
             }
@@ -88,48 +89,24 @@ impl Actor for Rebuilder {
                 match full_rebuild {
                     Some(reload) => self.send_rebuild_info(env.clone(), reload),
                     None => {
-                        // TODO: Handle race condition:
-                        // what if a full rebuild is ongoing when I patch?
-                        let (book, p_ref) = (&mut m.book, &mut self.patch_registry_ref);
-                        // NOTE: We assume this is be fast enough so that
-                        // we do not need to spawn a separate task.
-                        let patched = m.hbs_state.patch(book, &m.src_dir, &paths, p_ref);
-                        match patched.await {
-                            Ok(_) => debug!("Patched the book."),
-                            Err(err) => {
-                                error!(?err, "patching the book. Falling back to a full rebuild.");
-                                self.send_rebuild_info(env.clone(), false);
-                            }
-                        }
+                        let (book, ref_, sets) =
+                            (&m.book, &self.patch_registry_ref, &mut m.patch_join_sets);
+                        m.hbs_state.patch(book, &m.src_dir, paths, ref_, sets).await;
                     }
                 }
             }
             RebuildInfo::ModifiedContent { path, content } => {
                 let m = &mut self.mutables;
-                if let Some(CtxCore {
-                    chapter_name,
-                    len_content,
-                }) = m.hbs_state.path2ctxs.get(&path)
-                {
-                    let relative_path = path.strip_prefix(&m.src_dir)?;
-                    debug!(
-                        ?path,
-                        chapter_name,
-                        len_content,
-                        ?relative_path,
-                        "Patching with content."
-                    );
-                    if let Err(err) = patch_chapter_w_content(
-                        chapter_name,
+                if let Some(ctx) = m.hbs_state.path2ctxs.get(&path) {
+                    let task = patch_chapter_w_content(
+                        path.clone(),
+                        m.src_dir.clone(),
+                        ctx.chapter_name.clone(),
                         content,
-                        relative_path,
-                        &mut m.book,
-                        &mut self.patch_registry_ref,
-                    )
-                    .await
-                    {
-                        error!(?err, "patching with content. Ignoring it.");
-                    }
+                        m.book.clone(),
+                        self.patch_registry_ref.clone(),
+                    );
+                    _ = m.patch_join_sets.entry(path).or_default().spawn(task);
                 }
             }
         }
@@ -273,8 +250,29 @@ impl Rebuilder {
     }
 }
 
-fn running_patch_join_sets(patch_join_sets: &Fearless<PatchJoinSets>) -> Vec<PathBuf> {
-    let mut patch_join_sets = patch_join_sets.lock().unwrap();
+pub async fn patch_chapter_w_content(
+    path: PathBuf,
+    src_dir: PathBuf,
+    chapter_name: String,
+    content: String,
+    book: Arc<MDBookCore>,
+    patch_registry_ref: ActorRef<PatchRegistry>,
+) {
+    let task = try_patch_chapter_w_content(
+        &path,
+        &src_dir,
+        &chapter_name,
+        content,
+        &book,
+        &patch_registry_ref,
+    );
+    if let Err(err) = task.await {
+        error!(?err, ?path, chapter_name, "Patching chapter with content.");
+    }
+}
+
+/// Paths of the chapters that are being patched.
+fn running_patch_join_sets(patch_join_sets: &mut PatchJoinSets) -> Vec<PathBuf> {
     patch_join_sets
         .drain()
         .filter_map(|(path, mut join_set)| {
@@ -331,8 +329,7 @@ pub struct BookData {
     pub hbs_state: HtmlHbsState,
 }
 
-type Fearless<T> = Arc<Mutex<T>>;
-type PatchJoinSets = HashMap<PathBuf, TwoJoinSet<()>>;
+pub type PatchJoinSets = HashMap<PathBuf, TwoJoinSet<()>>;
 
 /// The mutable parts of [`Rebuilder`].
 #[derive(Default)]
@@ -344,9 +341,10 @@ pub struct RebuilderMut {
     summary_md: PathBuf,
     theme_dir: PathBuf,
     html_config: HtmlConfig,
+    // TODO: Arc this.
     src_dir: PathBuf,
     hbs_state: HtmlHbsState,
     rebuild_join_set: TwoJoinSet<()>,
-    /// [`TwoJoinSet`]s of each patched chapter's relative path.
-    patch_join_sets: Fearless<PatchJoinSets>,
+    /// [`TwoJoinSet`]s of each patched chapter's absolute path.
+    patch_join_sets: PatchJoinSets,
 }
