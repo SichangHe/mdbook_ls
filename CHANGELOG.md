@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.4](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.3...mdbook_incremental_preview-v0.0.4) - 2024-06-27
+## [0.0.1](https://github.com/SichangHe/mdbook_ls/compare/mdbook_ls-v0.0.0...mdbook_ls-v0.0.1) - 2024-06-27
 
 ### Added
 - *(lsp)* open browser at opened chapter
@@ -14,41 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(patching)* `MDBookCore` to overtake&share preprocessing
 - *(rebuilding)* two-JoinSet to keep oldest+newest rebuilds;
 - Initial LSP implementation ([#3](https://github.com/SichangHe/mdbook_ls/pull/3))
-
-### Other
-- `LivePatcher` → `Previewer`
-
-## [0.0.3](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.2...mdbook_incremental_preview-v0.0.3) - 2024-06-23
-
-### Added
 - feat!(mdbook-incremental-preview): binary take arguments;rename;
 - *(live patch)* issues `load` window event on patch
 - *(live patch)* only replace `<main>`;rebuild on requesting patched page;
-
-### Other
-- *(clean up)* WebSocket connect on path to chapter,
-
-## [0.0.2](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.1...mdbook_incremental_preview-v0.0.2) - 2024-06-21
-
-### Added
 - *(avoid copy)* directly serve static files&additional js&css
 - *(reload file watcher)* precisely decide;watch `SUMMARY.md`
 - *(incremental)* non-blocking async `rebuild_on_change`;
 - *(incremental)* async `execute`&`JoinSet` shutdown
-- *(incremental)* avoid copying assets in `src/`
-- *(performance)* write build artifacts to temporary directory
-
-### Fixed
-- *(additional JS/CSS)* correctly serve from files
-
-### Other
-- *(release)* mdbook_fork4ls 0.4.41-patch.1
-- *(server)* separate static file filters
-- *(limitations)* `link` preprocessor does work
-
-## [0.0.1](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.0...mdbook_incremental_preview-v0.0.1) - 2024-06-20
-
-### Added
 - *(incremental)* avoid copying assets in `src/`
 - *(performance)* write build artifacts to temporary directory
 - *(incremental)* configurable `execute`
@@ -57,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(save rendering state)* copy `hbs_renderer` to `StatefulHtmlHbs` wrapper
 
 ### Fixed
+- *(additional JS/CSS)* correctly serve from files
 - *(incremental)* write patch to correct path
 - *(watching theme dir)* watch children
 - *(incremental)* watch theme directory
@@ -65,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - fix `notify` type import
 
 ### Other
+- `LivePatcher` → `Previewer`
+- *(release)* `mdbook_incremental_preview` v0.0.3
+- *(clean up)* WebSocket connect on path to chapter,
+- *(release)* mdbook_incremental_preview 0.0.2
+- *(release)* mdbook_fork4ls 0.4.41-patch.1
+- *(server)* separate static file filters
+- *(limitations)* `link` preprocessor does work
+- release
 - explain incremental preview usage&debugging
 - *(incremental)* future work
 - only pass in book root not book if possible
