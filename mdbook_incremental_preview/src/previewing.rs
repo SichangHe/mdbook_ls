@@ -1,11 +1,14 @@
 use super::*;
 
+pub type IgnoredPaths = Arc<RwLock<HashSet<PathBuf>>>;
+
 pub struct Previewer {
     build_temp_dir: TempDir,
     book_root: PathBuf,
     socket_address: SocketAddr,
     open_browser_at: Option<PathBuf>,
     versions: HashMap<PathBuf, i32>,
+    ignored_paths: IgnoredPaths,
     patch_registry: Option<(
         ActorHandle<ActorMsg<PatchRegistry>>,
         ActorRef<PatchRegistry>,
@@ -22,6 +25,7 @@ impl Previewer {
             socket_address: ([127, 0, 0, 1], 3000).into(),
             open_browser_at: Some("".into()),
             versions: Default::default(),
+            ignored_paths: Default::default(),
             patch_registry: None,
             rebuilder: None,
             server: None,
@@ -42,6 +46,7 @@ impl Previewer {
             info_tx.clone(),
             self.get_or_make_patch_registry(env),
             self.open_browser_at.take(),
+            self.ignored_paths.clone(),
         );
         yield_now().await;
         let (handle, rebuilder_ref) =
@@ -144,8 +149,8 @@ impl Actor for Previewer {
                 self.stop().await;
             }
             PreviewInfo::Opened { path, version } => {
-                debug!(?path, version, "Opened.");
-                // TODO: Pause watching `path`.
+                debug!(?path, version, "Opened. Starting ignoring its file events.");
+                self.ignored_paths.write().unwrap().insert(path.clone());
                 self.versions
                     .entry(path)
                     .and_modify(|v| *v = version.max(*v))
@@ -182,9 +187,9 @@ impl Actor for Previewer {
                 }
             }
             PreviewInfo::Closed(path) => {
-                debug!(?path, "Closed.");
+                debug!(?path, "Closed. Stopping ignoring its file events.");
                 self.versions.remove(&path);
-                // TODO: Resume watching `path`.
+                self.ignored_paths.write().unwrap().remove(&path);
             }
         }
         Ok(())

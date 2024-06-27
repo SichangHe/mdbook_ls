@@ -170,10 +170,14 @@ impl Rebuilder {
                 ?book.config.build.extra_watch_dirs,
                 "Reloading the file watcher.",
             );
-            let env = env.clone();
+            let (env, ignored_paths) = (env.clone(), m.ignored_paths.clone());
             let event_handler = move |events: Result<Vec<DebouncedEvent>, _>| match events {
                 Ok(events) if !events.is_empty() => {
-                    let paths = events.into_iter().map(|event| event.path).collect();
+                    let paths = events.into_iter().map(|event| event.path);
+                    let paths = {
+                        let ignored_paths = ignored_paths.read().unwrap();
+                        paths.filter(|path| !ignored_paths.contains(path)).collect()
+                    };
                     env.blocking_cast(RebuildInfo::ChangedPaths(paths))
                         .drop_result();
                 }
@@ -255,6 +259,7 @@ impl Rebuilder {
         info_tx: mpsc::Sender<ServeInfo>,
         patch_registry_ref: ActorRef<PatchRegistry>,
         open_browser_at: Option<PathBuf>,
+        ignored_paths: IgnoredPaths,
     ) -> Self {
         let book_toml = book_root.join("book.toml");
         Self {
@@ -266,6 +271,7 @@ impl Rebuilder {
             book_toml,
             mutables: RebuilderMut {
                 open_browser_at,
+                ignored_paths,
                 ..Default::default()
             },
         }
@@ -369,4 +375,5 @@ pub struct RebuilderMut {
     rebuild_join_set: TwoJoinSet<()>,
     /// [`TwoJoinSet`]s of each patched chapter's absolute path.
     patch_join_sets: PatchJoinSets,
+    ignored_paths: IgnoredPaths,
 }
