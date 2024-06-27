@@ -1,6 +1,6 @@
 use super::*;
 
-pub struct LivePatcher {
+pub struct Previewer {
     build_temp_dir: TempDir,
     book_root: PathBuf,
     socket_address: SocketAddr,
@@ -14,7 +14,7 @@ pub struct LivePatcher {
     server: Option<JoinHandle<()>>,
 }
 
-impl LivePatcher {
+impl Previewer {
     pub fn try_new() -> Result<Self> {
         Ok(Self {
             build_temp_dir: tempdir()?,
@@ -103,16 +103,16 @@ impl LivePatcher {
     }
 }
 
-impl Actor for LivePatcher {
+impl Actor for Previewer {
     type L = ();
-    type T = LivePatcherInfo;
+    type T = PreviewInfo;
     type R = ();
     async fn handle_cast(&mut self, msg: Self::T, env: &mut ActorRef<Self>) -> Result<()> {
         match msg {
-            LivePatcherInfo::BookRoot(book_root) if book_root == self.book_root => {
+            PreviewInfo::BookRoot(book_root) if book_root == self.book_root => {
                 debug!(?book_root, "Ignoring unchanged.");
             }
-            LivePatcherInfo::BookRoot(book_root) => {
+            PreviewInfo::BookRoot(book_root) => {
                 debug!(?book_root, "Updating.");
                 self.book_root = book_root;
                 if self.rebuilder.is_some() {
@@ -121,7 +121,7 @@ impl Actor for LivePatcher {
                     self.start(env).await;
                 }
             }
-            LivePatcherInfo::OpenPreview {
+            PreviewInfo::OpenPreview {
                 socket_address,
                 open_browser_at,
             } => {
@@ -139,11 +139,11 @@ impl Actor for LivePatcher {
                     None => self.start(env).await,
                 }
             }
-            LivePatcherInfo::StopPreview => {
+            PreviewInfo::StopPreview => {
                 info!("Stopping live patching.");
                 self.stop().await;
             }
-            LivePatcherInfo::Opened { path, version } => {
+            PreviewInfo::Opened { path, version } => {
                 debug!(?path, version, "Opened.");
                 // TODO: Pause watching `path`.
                 self.versions
@@ -151,7 +151,7 @@ impl Actor for LivePatcher {
                     .and_modify(|v| *v = version.max(*v))
                     .or_insert(version);
             }
-            LivePatcherInfo::ModifiedContent {
+            PreviewInfo::ModifiedContent {
                 path,
                 version,
                 content,
@@ -181,7 +181,7 @@ impl Actor for LivePatcher {
                     }
                 }
             }
-            LivePatcherInfo::Closed(path) => {
+            PreviewInfo::Closed(path) => {
                 debug!(?path, "Closed.");
                 self.versions.remove(&path);
                 // TODO: Resume watching `path`.
@@ -206,7 +206,7 @@ impl Actor for LivePatcher {
 }
 
 #[derive(Clone, Debug)]
-pub enum LivePatcherInfo {
+pub enum PreviewInfo {
     /// Update the book root.
     BookRoot(PathBuf),
     OpenPreview {
@@ -228,7 +228,7 @@ pub enum LivePatcherInfo {
     Closed(PathBuf),
 }
 
-impl Drop for LivePatcher {
+impl Drop for Previewer {
     fn drop(&mut self) {
         self.maybe_stop_web_server();
     }

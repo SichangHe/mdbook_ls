@@ -82,15 +82,15 @@ const LIVE_PATCH_WEBSOCKET_PATH: &str = "__mdbook_incremental_preview_live_patch
 
 // Serve the book at absolute path `book_root` at the given `socket_address`,
 // and patch it live continuously.
-pub async fn live_patch_continuously(
+pub async fn preview_continuously(
     book_root: PathBuf,
     socket_address: SocketAddr,
     open_browser: bool,
 ) -> Result<()> {
-    let live_patcher = LivePatcher::try_new()?;
-    let (handle, actor_ref) = live_patcher.spawn();
-    actor_ref.cast(LivePatcherInfo::BookRoot(book_root)).await?;
-    let msg = LivePatcherInfo::OpenPreview {
+    let previewer = Previewer::try_new()?;
+    let (handle, actor_ref) = previewer.spawn();
+    actor_ref.cast(PreviewInfo::BookRoot(book_root)).await?;
+    let msg = PreviewInfo::OpenPreview {
         socket_address: Some(socket_address),
         open_browser_at: open_browser.then_some("".into()),
     };
