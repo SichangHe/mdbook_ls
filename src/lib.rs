@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Result;
-use mdbook_incremental_preview::live_patching::*;
+use mdbook_incremental_preview::previewing::*;
 use serde_json::Value;
 use tokio::{
     io::{stdin, stdout},
@@ -20,7 +20,7 @@ use lsp::*;
 
 pub async fn run_mdbook_ls() -> Result<()> {
     let (stdin, stdout) = (stdin(), stdout());
-    let live_patcher = LivePatcher::try_new()?;
+    let live_patcher = Previewer::try_new()?;
     let (service, socket) = LspService::new(|client| MDBookLS::new(client, live_patcher));
     info!(?socket, "Starting mdBook-LS");
     Server::new(stdin, stdout, socket).serve(service).await;

@@ -2,7 +2,7 @@ use clap::Parser;
 use std::{io::stderr, net::IpAddr, path::PathBuf};
 
 use anyhow::Result;
-use mdbook_incremental_preview::live_patch_continuously;
+use mdbook_incremental_preview::preview_continuously;
 use tracing::*;
 use tracing_subscriber::EnvFilter;
 
@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let book_root = args.dir.canonicalize()?;
     let socket_address = (args.hostname, args.port).into();
-    live_patch_continuously(book_root, socket_address, args.open).await
+    preview_continuously(book_root, socket_address, args.open).await
 }
 
 #[derive(Parser)]

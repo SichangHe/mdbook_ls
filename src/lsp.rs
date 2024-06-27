@@ -5,12 +5,12 @@ use super::*;
 #[derive(Debug)]
 pub struct MDBookLS {
     client: Client,
-    live_patcher_handle: ActorHandle<ActorMsg<LivePatcher>>,
-    live_patcher: ActorRef<LivePatcher>,
+    live_patcher_handle: ActorHandle<ActorMsg<Previewer>>,
+    live_patcher: ActorRef<Previewer>,
 }
 
 impl MDBookLS {
-    pub fn new(client: Client, live_patcher: LivePatcher) -> Self {
+    pub fn new(client: Client, live_patcher: Previewer) -> Self {
         let (tx, msg_receiver) = mpsc::channel(8);
         let (live_patcher_handle, live_patcher) =
             live_patcher.spawn_with_channel(tx.clone(), msg_receiver);
@@ -42,7 +42,7 @@ impl LanguageServer for MDBookLS {
             .map_or_else(|| ".".into(), |folder| folder.name.into());
         debug!(?book_root, "Initializing server.");
         self.live_patcher
-            .cast(LivePatcherInfo::BookRoot(book_root))
+            .cast(PreviewInfo::BookRoot(book_root))
             .await
             .expect("Live patcher died.");
 
@@ -63,7 +63,7 @@ impl LanguageServer for MDBookLS {
             }
             "stop_preview" => self
                 .live_patcher
-                .cast(LivePatcherInfo::StopPreview)
+                .cast(PreviewInfo::StopPreview)
                 .await
                 .expect("Live patcher died."),
             unknown_command => {
@@ -91,7 +91,7 @@ impl LanguageServer for MDBookLS {
         match (language_id.as_str(), uri2abs_file_path(&uri)) {
             ("markdown", Some(path)) => {
                 let path = path.into();
-                let msg = LivePatcherInfo::Opened { path, version };
+                let msg = PreviewInfo::Opened { path, version };
                 let task = self.live_patcher.cast(msg);
                 task.await.expect("LivePatcher died.");
             }
@@ -110,7 +110,7 @@ impl LanguageServer for MDBookLS {
         info!(uri.path = uri.path(), version, "did_change");
         match (content_changes.pop(), uri2abs_file_path(&uri)) {
             (Some(TextDocumentContentChangeEvent { text, .. }), Some(path)) => {
-                let msg = LivePatcherInfo::ModifiedContent {
+                let msg = PreviewInfo::ModifiedContent {
                     path: path.into(),
                     version,
                     content: text,
@@ -137,7 +137,7 @@ impl LanguageServer for MDBookLS {
     ) {
         info!(uri.path = uri.path(), "did_close");
         if let Some(path) = uri2abs_file_path(&uri) {
-            let msg = LivePatcherInfo::Closed(path.into());
+            let msg = PreviewInfo::Closed(path.into());
             let task = self.live_patcher.cast(msg);
             task.await.expect("LivePatcher died.");
         }
@@ -149,7 +149,7 @@ impl LanguageServer for MDBookLS {
     }
 }
 
-fn open_params(params: ExecuteCommandParams) -> LivePatcherInfo {
+fn open_params(params: ExecuteCommandParams) -> PreviewInfo {
     let mut args = params.arguments.into_iter();
     let socket_address = args.next().and_then(|v| {
         v.as_str().and_then(|s| {
@@ -159,7 +159,7 @@ fn open_params(params: ExecuteCommandParams) -> LivePatcherInfo {
         })
     });
     let open_browser_at = args.next().and_then(|v| v.as_str().map(PathBuf::from));
-    LivePatcherInfo::OpenPreview {
+    PreviewInfo::OpenPreview {
         socket_address,
         open_browser_at,
     }
