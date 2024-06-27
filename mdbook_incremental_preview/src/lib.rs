@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cell::RefCell,
     collections::{HashMap, HashSet},
     ffi::OsStr,
     io, iter, mem,
@@ -15,9 +16,10 @@ use futures_util::{sink::SinkExt, StreamExt};
 use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
 use mdbook::{
-    book::{Book, Chapter},
+    book::{preprocessor_should_run, Book, Chapter},
     config::HtmlConfig,
     errors::*,
+    preprocess::{Preprocessor, PreprocessorContext},
     renderer::{
         html_handlebars::{
             hbs_renderer::{make_data, RenderItemContext},
@@ -26,7 +28,7 @@ use mdbook::{
         HtmlHandlebars, RenderContext,
     },
     theme::{self, playground_editor, Theme},
-    utils, BookItem, MDBook,
+    utils, BookItem, Config, MDBook, Renderer, MDBOOK_VERSION,
 };
 use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
@@ -92,6 +94,18 @@ pub async fn live_patch_continuously(
     actor_ref.cast(msg).await?;
     try_join_actor_handle(handle).await?;
     Ok(())
+}
+
+/// Runs the provided blocking function on the current thread without
+/// blocking the executor,
+/// then yield the control back to the executor.
+pub async fn block_n_yield<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let result = block_in_place(f);
+    yield_now().await;
+    result
 }
 
 async fn shut_down_actor_n_log_err<A: Actor>(

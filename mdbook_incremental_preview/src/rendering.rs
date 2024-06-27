@@ -123,7 +123,7 @@ impl HtmlHbsState {
             if is_index {
                 self.index_path = Some(source_path.strip_prefix(&src_dir)?.to_owned());
             }
-            let mut ctx = RenderItemContext {
+            let ctx = RenderItemContext {
                 handlebars,
                 destination: destination.to_path_buf(),
                 data: data.clone(),
@@ -135,7 +135,7 @@ impl HtmlHbsState {
             };
             // Only the first non-draft chapter item should be treated as the "index"
             is_index = false;
-            block_in_place(|| RENDERER.render_item(item, &mut ctx, &mut print_content))?;
+            block_n_yield(|| RENDERER.render_item(item, ctx, &mut print_content)).await?;
             let ctx = CtxCore {
                 chapter_name: name.clone(),
                 len_content: content.len(),
@@ -145,13 +145,14 @@ impl HtmlHbsState {
 
         // Render 404 page
         if html_config.input_404 != Some("".to_string()) {
-            block_in_place(|| {
+            block_n_yield(|| {
                 RENDERER.render_404(ctx, &html_config, &src_dir, handlebars, &mut data)
-            })?;
+            })
+            .await?;
         }
 
         // Print version
-        block_in_place(|| RENDERER.configure_print_version(&mut data, &print_content));
+        block_n_yield(|| RENDERER.configure_print_version(&mut data, &print_content)).await;
         if let Some(ref title) = ctx.config.book.title {
             data.insert("title".to_owned(), json!(title));
         }
@@ -162,18 +163,18 @@ impl HtmlHbsState {
             let rendered = handlebars.render("index", &data)?;
             yield_now().await;
 
-            let rendered = block_in_place(|| {
+            let rendered = block_n_yield(|| {
                 RENDERER.post_process(
                     rendered,
                     &html_config.playground,
                     &html_config.code,
                     ctx.config.rust.edition,
                 )
-            });
+            })
+            .await;
 
-            block_in_place(|| {
-                utils::fs::write_file(destination, "print.html", rendered.as_bytes())
-            })?;
+            block_n_yield(|| utils::fs::write_file(destination, "print.html", rendered.as_bytes()))
+                .await?;
             debug!("Created print.html ✓");
         }
 
@@ -181,13 +182,14 @@ impl HtmlHbsState {
         let search = html_config.search.unwrap_or_default();
         if search.enable {
             debug!("Search indexing");
-            block_in_place(|| search::create_files(&search, destination, book))?;
+            block_n_yield(|| search::create_files(&search, destination, book)).await?;
         }
 
         debug!("Emitting redirects");
-        block_in_place(|| {
+        block_n_yield(|| {
             RENDERER.emit_redirects(&ctx.destination, handlebars, &html_config.redirect)
         })
+        .await
         .context("Unable to emit redirects")?;
 
         Ok(())
@@ -204,15 +206,11 @@ impl HtmlHbsState {
     /// not supported.
     pub async fn patch<'i, I: IntoIterator<Item = &'i PathBuf>>(
         &self,
-        book: &mut MDBook,
+        book: &MDBookCore,
         src_dir: &Path,
         paths: I,
         patch_registry_ref: &mut ActorRef<PatchRegistry>,
     ) -> Result<()> {
-        let original_book_preserved = mem::take(&mut book.book);
-
-        // NOTE: This being single-threaded is fine because
-        // usually only one chapter is patched at a time.
         for path in paths.into_iter() {
             let Some(CtxCore {
                 chapter_name,
@@ -234,10 +232,6 @@ impl HtmlHbsState {
             )
             .await?;
         }
-
-        // NOTE: Not restoring if an error occurs,
-        // but would be fine because we would do a full rebuild anyway.
-        book.book = original_book_preserved;
         Ok(())
     }
 }
@@ -246,26 +240,23 @@ pub async fn patch_chapter_w_content(
     chapter_name: &str,
     content: String,
     relative_path: &Path,
-    book: &mut MDBook,
+    book: &MDBookCore,
     patch_registry_ref: &mut ActorRef<PatchRegistry>,
 ) -> Result<()> {
     // TODO: Spawn tasks into `patch_join_sets` instead of blocking.
     let chapter = Chapter::new(chapter_name, content, relative_path, vec![]);
     let mut patcher_book = Book::new();
     patcher_book.sections = vec![BookItem::Chapter(chapter)];
-    book.book = patcher_book;
-    // TODO: Inline this `preprocess_book` call.
-    let (mut preprocessed_book, _) = block_in_place(|| book.preprocess_book(&RENDERER))?;
+    let (mut preprocessed_book, _) = book.preprocess_book(patcher_book).await?;
     let markdown = match preprocessed_book.sections.pop() {
-        None => bail!("{:?} preprocessed to an empty book.", book.book),
+        None => bail!("{chapter_name} at {relative_path:?} preprocessed to an empty book."),
         Some(BookItem::Chapter(Chapter {
             content,
             source_path: Some(source_path),
             ..
         })) if source_path == relative_path => content,
         _ => bail!(
-            "{:?} preprocessed to unexpected {preprocessed_book:?}",
-            book.book
+            "{chapter_name} at {relative_path:?} preprocessed to unexpected {preprocessed_book:?}"
         ),
     };
     patch_registry_ref
@@ -290,4 +281,54 @@ async fn load_content_of_chapter(path: &PathBuf, capacity: usize) -> io::Result<
     content.shrink_to_fit();
 
     Ok(content)
+}
+
+/// Core fields of [MDBook] for separate rendering.
+// NOTE: This is adapted from `MDBook`.
+#[derive(Default)]
+pub struct MDBookCore {
+    /// The book's root directory.
+    pub root: PathBuf,
+    /// The configuration used to tweak now a book is built.
+    pub config: Config,
+    /// List of renderers to render the book.
+    pub renderers: Vec<Box<dyn Renderer + Send + Sync + 'static>>,
+    /// List of pre-processors to be run on the book.
+    pub preprocessors: Vec<Box<dyn Preprocessor + Send + Sync + 'static>>,
+}
+
+impl MDBookCore {
+    /// Run preprocessors on `book` and return the final book.
+    pub async fn preprocess_book(&self, book: Book) -> Result<(Book, PreprocessorContext)> {
+        let preprocess_ctx = PreprocessorContext {
+            root: self.root.clone(),
+            config: self.config.clone(),
+            renderer: RENDERER.name().to_string(),
+            mdbook_version: MDBOOK_VERSION.to_string(),
+            chapter_titles: RefCell::new(HashMap::new()),
+            __non_exhaustive: (),
+        };
+        // NOTE: This `Mutex` is needed because `PreprocessorContext: !Send`.
+        let preprocess_ctx = Mutex::new(preprocess_ctx);
+        let mut preprocessed_book = book;
+        for preprocessor in &self.preprocessors {
+            let should_run = || preprocessor_should_run(&**preprocessor, &RENDERER, &self.config);
+            if block_n_yield(should_run).await {
+                debug!(preprocessor = preprocessor.name(), "Running.",);
+                let run = || preprocessor.run(&preprocess_ctx.lock().unwrap(), preprocessed_book);
+                preprocessed_book = block_n_yield(run).await?;
+            }
+        }
+        Ok((preprocessed_book, preprocess_ctx.into_inner().unwrap()))
+    }
+}
+impl From<MDBook> for MDBookCore {
+    fn from(value: MDBook) -> Self {
+        Self {
+            root: value.root,
+            config: value.config,
+            renderers: value.renderers,
+            preprocessors: value.preprocessors,
+        }
+    }
 }

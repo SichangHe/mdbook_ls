@@ -55,7 +55,7 @@ impl Actor for Rebuilder {
                 }
                 let m = &mut self.mutables;
                 (m.book, m.html_config, m.theme_dir, m.hbs_state) =
-                    (book, html_config, theme_dir, hbs_state);
+                    (Arc::new(book), html_config, theme_dir, hbs_state);
                 let paths = running_patch_join_sets(&self.mutables.patch_join_sets);
                 let (env, msg) = (env.clone(), RebuildInfo::ChangedPaths(paths));
                 spawn(async move { env.cast(msg).await.drop_result() });
@@ -68,7 +68,7 @@ impl Actor for Rebuilder {
                         // Gitignore file changed,
                         // update the gitignore and make a full rebuild.
                         m.maybe_gitignore =
-                            block_in_place(|| maybe_make_gitignore(&self.book_root));
+                            block_n_yield(|| maybe_make_gitignore(&self.book_root)).await;
                         debug!("Reloaded gitignore.");
                         Some(false)
                     }
@@ -151,13 +151,13 @@ pub enum RebuildInfo {
 impl Rebuilder {
     async fn handle_reload(
         &mut self,
-        book: &MDBook,
+        book: &MDBookCore,
         html_config: &HtmlConfig,
         theme_dir: &PathBuf,
         env: &ActorRef<Self>,
     ) -> Result<()> {
         let m = &mut self.mutables;
-        let src_dir = book.source_dir();
+        let src_dir = book.root.join(&book.config.book.src);
         let src_dir_changed = src_dir != m.src_dir;
         let theme_dir_changed = m.theme_dir != *theme_dir;
         let extra_watch_dirs_changed =
@@ -196,7 +196,7 @@ impl Rebuilder {
                 Ok(_) => {}
                 Err(err) => error!(?err, "Watching for changes"),
             };
-            m._debouncer_to_keep_watcher_alive = Some(block_in_place(|| {
+            let watch = || {
                 watch_file_changes(
                     &self.book_root,
                     &src_dir,
@@ -205,7 +205,8 @@ impl Rebuilder {
                     &book.config.build.extra_watch_dirs,
                     event_handler,
                 )
-            }));
+            };
+            m._debouncer_to_keep_watcher_alive = Some(block_n_yield(watch).await);
         }
 
         if src_dir_changed || additional_js_changed || additional_css_changed || file_404_changed {
@@ -296,11 +297,11 @@ async fn try_load_book(
     mut hbs_state: HtmlHbsState,
     env: ActorRef<Rebuilder>,
 ) -> Result<()> {
-    let mut book = block_in_place(|| MDBook::load(&book_root))?;
+    let mut book = block_n_yield(|| MDBook::load(&book_root)).await?;
     config_book_for_live_reload(&mut book).context("configuring the book for live reload")?;
-    let render_context = block_in_place(|| make_render_context(&book, &build_dir))?;
+    let render_context = block_n_yield(|| make_render_context(&book, &build_dir)).await?;
     let (html_config, theme_dir, theme, handlebars) =
-        block_in_place(|| html_config_n_theme_dir_n_theme_n_handlebars(&render_context))?;
+        block_n_yield(|| html_config_n_theme_dir_n_theme_n_handlebars(&render_context)).await?;
     hbs_state
         .full_render(&render_context, html_config.clone(), &theme, &handlebars)
         .await?;
@@ -311,7 +312,7 @@ async fn try_load_book(
         "rebuilt the book"
     );
     env.cast(RebuildInfo::NewBook(Box::new(BookData {
-        book,
+        book: book.into(),
         reload,
         html_config,
         theme_dir,
@@ -323,7 +324,7 @@ async fn try_load_book(
 }
 
 pub struct BookData {
-    pub book: MDBook,
+    pub book: MDBookCore,
     pub reload: bool,
     pub html_config: HtmlConfig,
     pub theme_dir: PathBuf,
@@ -338,7 +339,7 @@ type PatchJoinSets = HashMap<PathBuf, TwoJoinSet<()>>;
 pub struct RebuilderMut {
     serving_url: Option<String>,
     _debouncer_to_keep_watcher_alive: Option<Debouncer<RecommendedWatcher>>,
-    book: MDBook,
+    book: Arc<MDBookCore>,
     maybe_gitignore: Option<(Gitignore, PathBuf)>,
     summary_md: PathBuf,
     theme_dir: PathBuf,
