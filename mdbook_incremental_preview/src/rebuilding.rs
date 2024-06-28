@@ -4,12 +4,13 @@ use super::*;
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/watch/native.rs>.
 
 pub struct Rebuilder {
-    book_root: PathBuf,
-    build_dir: PathBuf,
+    book_root: Arc<Path>,
+    build_dir: Arc<Path>,
     socket_address: SocketAddr,
     info_tx: mpsc::Sender<ServeInfo>,
     patch_registry_ref: ActorRef<PatchRegistry>,
     book_toml: PathBuf,
+    src_dir: Arc<Path>,
     mutables: RebuilderMut,
 }
 
@@ -56,7 +57,7 @@ impl Actor for Rebuilder {
                 }
                 let m = &mut self.mutables;
                 (m.book, m.html_config, m.theme_dir, m.hbs_state) =
-                    (Arc::new(book), html_config, theme_dir, hbs_state);
+                    (book.into(), html_config, theme_dir, hbs_state);
                 // Re-patch the chapters patched after a rebuild.
                 let paths = running_patch_join_sets(&mut m.patch_join_sets);
                 let (env, msg) = (env.clone(), RebuildInfo::ChangedPaths(paths));
@@ -90,18 +91,18 @@ impl Actor for Rebuilder {
                 match full_rebuild {
                     Some(reload) => self.send_rebuild_info(env.clone(), reload),
                     None => {
-                        let (book, ref_, sets) =
+                        let (b, ref_, sets) =
                             (&m.book, &self.patch_registry_ref, &mut m.patch_join_sets);
-                        m.hbs_state.patch(book, &m.src_dir, paths, ref_, sets).await;
+                        m.hbs_state.patch(b, &self.src_dir, paths, ref_, sets).await;
                     }
                 }
             }
             RebuildInfo::ModifiedContent { path, content } => {
                 let m = &mut self.mutables;
-                if let Some(ctx) = m.hbs_state.path2ctxs.get(&path) {
+                if let Some((arc_path, ctx)) = m.hbs_state.path2ctxs.get_key_value(path.as_path()) {
                     let task = patch_chapter_w_content(
-                        path.clone(),
-                        m.src_dir.clone(),
+                        arc_path.clone(),
+                        self.src_dir.clone(),
                         ctx.chapter_name.clone(),
                         content,
                         m.book.clone(),
@@ -137,12 +138,12 @@ impl Rebuilder {
         &mut self,
         book: &MDBookCore,
         html_config: &HtmlConfig,
-        theme_dir: &PathBuf,
+        theme_dir: &Path,
         env: &ActorRef<Self>,
     ) -> Result<()> {
         let m = &mut self.mutables;
         let src_dir = book.root.join(&book.config.book.src);
-        let src_dir_changed = src_dir != m.src_dir;
+        let src_dir_changed = src_dir != *self.src_dir;
         let theme_dir_changed = m.theme_dir != *theme_dir;
         let extra_watch_dirs_changed =
             m.book.config.build.extra_watch_dirs != book.config.build.extra_watch_dirs;
@@ -215,7 +216,7 @@ impl Rebuilder {
             self.info_tx
                 .send(ServeInfo {
                     src_dir: src_dir.clone(),
-                    theme_dir: theme_dir.clone(),
+                    theme_dir: theme_dir.into(),
                     additional_js: html_config.additional_js.clone(),
                     additional_css: html_config.additional_css.clone(),
                     file_404: file_404.clone(),
@@ -225,7 +226,7 @@ impl Rebuilder {
         }
 
         if src_dir_changed {
-            (m.summary_md, m.src_dir) = (src_dir.join("SUMMARY.md"), src_dir);
+            (m.summary_md, self.src_dir) = (src_dir.join("SUMMARY.md"), src_dir.into());
         }
         self.maybe_open_browser();
         Ok(())
@@ -243,7 +244,7 @@ impl Rebuilder {
             // We have done at least one rebuild.
             if let Some(path) = mem::take(&mut m.open_browser_at) {
                 let path = path
-                    .strip_prefix(&m.src_dir)
+                    .strip_prefix(&self.src_dir)
                     .unwrap_or(&path)
                     .with_extension("html");
                 let address = format!("http://{}/{}", self.socket_address, path.display());
@@ -253,8 +254,8 @@ impl Rebuilder {
     }
 
     pub fn new(
-        book_root: PathBuf,
-        build_dir: PathBuf,
+        book_root: Arc<Path>,
+        build_dir: Arc<Path>,
         socket_address: SocketAddr,
         info_tx: mpsc::Sender<ServeInfo>,
         patch_registry_ref: ActorRef<PatchRegistry>,
@@ -269,6 +270,7 @@ impl Rebuilder {
             info_tx,
             patch_registry_ref,
             book_toml,
+            src_dir: Path::new("").into(),
             mutables: RebuilderMut {
                 open_browser_at,
                 ignored_paths,
@@ -279,9 +281,9 @@ impl Rebuilder {
 }
 
 pub async fn patch_chapter_w_content(
-    path: PathBuf,
-    src_dir: PathBuf,
-    chapter_name: String,
+    path: Arc<Path>,
+    src_dir: Arc<Path>,
+    chapter_name: Arc<str>,
     content: String,
     book: Arc<MDBookCore>,
     patch_registry_ref: ActorRef<PatchRegistry>,
@@ -294,8 +296,14 @@ pub async fn patch_chapter_w_content(
         &book,
         &patch_registry_ref,
     );
+
     if let Err(err) = task.await {
-        error!(?err, ?path, chapter_name, "Patching chapter with content.");
+        error!(
+            ?err,
+            ?path,
+            chapter_name = chapter_name.as_ref(),
+            "Patching chapter with content.",
+        );
     }
 }
 
@@ -310,22 +318,27 @@ fn running_patch_join_sets(patch_join_sets: &mut PatchJoinSets) -> Vec<PathBuf> 
         .collect()
 }
 
-async fn load_book(book_root: PathBuf, build_dir: PathBuf, reload: bool, env: ActorRef<Rebuilder>) {
-    if let Err(err) = try_load_book(book_root, build_dir, reload, Default::default(), env).await {
+async fn load_book(
+    book_root: Arc<Path>,
+    build_dir: Arc<Path>,
+    reload: bool,
+    env: ActorRef<Rebuilder>,
+) {
+    if let Err(err) = try_load_book(&book_root, &build_dir, reload, Default::default(), env).await {
         error!(?err, "loading and preprocessing the book.");
     }
 }
 
 async fn try_load_book(
-    book_root: PathBuf,
-    build_dir: PathBuf,
+    book_root: &Path,
+    build_dir: &Path,
     reload: bool,
     mut hbs_state: HtmlHbsState,
     env: ActorRef<Rebuilder>,
 ) -> Result<()> {
-    let mut book = block_n_yield(|| MDBook::load(&book_root)).await?;
+    let mut book = block_n_yield(|| MDBook::load(book_root)).await?;
     config_book_for_live_reload(&mut book).context("configuring the book for live reload")?;
-    let render_context = block_n_yield(|| make_render_context(&book, &build_dir)).await?;
+    let render_context = block_n_yield(|| make_render_context(&book, build_dir)).await?;
     let (html_config, theme_dir, theme, handlebars) =
         block_n_yield(|| html_config_n_theme_dir_n_theme_n_handlebars(&render_context)).await?;
     hbs_state
@@ -369,8 +382,6 @@ pub struct RebuilderMut {
     summary_md: PathBuf,
     theme_dir: PathBuf,
     html_config: HtmlConfig,
-    // TODO: Arc this.
-    src_dir: PathBuf,
     hbs_state: HtmlHbsState,
     rebuild_join_set: TwoJoinSet<()>,
     /// [`TwoJoinSet`]s of each patched chapter's absolute path.

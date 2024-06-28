@@ -4,7 +4,7 @@ pub type IgnoredPaths = Arc<RwLock<HashSet<PathBuf>>>;
 
 pub struct Previewer {
     build_temp_dir: TempDir,
-    book_root: PathBuf,
+    book_root: Arc<Path>,
     socket_address: SocketAddr,
     open_browser_at: Option<PathBuf>,
     versions: HashMap<PathBuf, i32>,
@@ -21,7 +21,7 @@ impl Previewer {
     pub fn try_new() -> Result<Self> {
         Ok(Self {
             build_temp_dir: tempdir()?,
-            book_root: Default::default(),
+            book_root: Path::new("").into(),
             socket_address: ([127, 0, 0, 1], 3000).into(),
             open_browser_at: Some("".into()),
             versions: Default::default(),
@@ -41,7 +41,7 @@ impl Previewer {
 
         let rebuilder = Rebuilder::new(
             self.book_root.clone(),
-            self.build_dir().to_owned(),
+            self.build_dir().into(),
             self.socket_address,
             info_tx.clone(),
             self.get_or_make_patch_registry(env),
@@ -57,7 +57,7 @@ impl Previewer {
         // `LivePatcher`.
         yield_now().await;
         self.server = Some(spawn(serve_reloading(
-            self.book_root.clone(),
+            self.book_root.to_path_buf(),
             self.socket_address,
             self.build_dir().to_owned(),
             rebuilder_ref,
@@ -114,12 +114,12 @@ impl Actor for Previewer {
     type R = ();
     async fn handle_cast(&mut self, msg: Self::T, env: &mut ActorRef<Self>) -> Result<()> {
         match msg {
-            PreviewInfo::BookRoot(book_root) if book_root == self.book_root => {
+            PreviewInfo::BookRoot(book_root) if book_root == *self.book_root => {
                 debug!(?book_root, "Ignoring unchanged.");
             }
             PreviewInfo::BookRoot(book_root) => {
                 debug!(?book_root, "Updating.");
-                self.book_root = book_root;
+                self.book_root = book_root.into();
                 if self.rebuilder.is_some() {
                     info!("Restarting live patching.");
                     self.stop().await;

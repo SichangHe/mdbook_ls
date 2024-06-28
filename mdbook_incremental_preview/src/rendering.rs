@@ -2,8 +2,7 @@ use super::*;
 
 #[derive(Default)]
 pub struct HtmlHbsState {
-    // TODO: Arc both key and value.
-    pub path2ctxs: HashMap<PathBuf, CtxCore>,
+    pub path2ctxs: HashMap<Arc<Path>, CtxCore>,
     pub smart_punctuation: bool,
     /// Relative path of the source file of the index chapter.
     pub index_path: Option<PathBuf>,
@@ -11,7 +10,7 @@ pub struct HtmlHbsState {
 
 #[derive(Clone, Debug)]
 pub struct CtxCore {
-    pub chapter_name: String,
+    pub chapter_name: Arc<str>,
     pub len_content: usize,
 }
 
@@ -138,10 +137,10 @@ impl HtmlHbsState {
             is_index = false;
             block_n_yield(|| RENDERER.render_item(item, ctx, &mut print_content)).await?;
             let ctx = CtxCore {
-                chapter_name: name.clone(),
+                chapter_name: name.clone().into(),
                 len_content: content.len(),
             };
-            self.path2ctxs.insert(source_path, ctx);
+            self.path2ctxs.insert(source_path.into(), ctx);
         }
 
         // Render 404 page
@@ -208,18 +207,18 @@ impl HtmlHbsState {
     pub async fn patch<I: IntoIterator<Item = PathBuf>>(
         &self,
         book: &Arc<MDBookCore>,
-        src_dir: &Path,
+        src_dir: &Arc<Path>,
         paths: I,
         patch_registry_ref: &ActorRef<PatchRegistry>,
         patch_join_sets: &mut PatchJoinSets,
     ) {
         for path in paths.into_iter() {
-            if let Some(ctx) = self.path2ctxs.get(&path) {
+            if let Some((arc_path, ctx)) = self.path2ctxs.get_key_value(path.as_path()) {
                 let task = patch_chapter(
-                    path.clone(),
+                    arc_path.clone(),
                     ctx.clone(),
                     book.clone(),
-                    src_dir.into(),
+                    src_dir.clone(),
                     patch_registry_ref.clone(),
                 );
                 _ = patch_join_sets.entry(path).or_default().spawn(task);
@@ -229,13 +228,13 @@ impl HtmlHbsState {
 }
 
 pub async fn patch_chapter(
-    path: PathBuf,
+    path: Arc<Path>,
     CtxCore {
         chapter_name,
         len_content,
     }: CtxCore,
     book: Arc<MDBookCore>,
-    src_dir: PathBuf,
+    src_dir: Arc<Path>,
     patch_registry_ref: ActorRef<PatchRegistry>,
 ) {
     let task = try_patch_chapter(
@@ -247,15 +246,20 @@ pub async fn patch_chapter(
         &patch_registry_ref,
     );
     if let Err(err) = task.await {
-        error!(?err, ?path, chapter_name, "Patching chapter.");
+        error!(
+            ?err,
+            ?path,
+            chapter_name = chapter_name.as_ref(),
+            "Patching chapter.",
+        );
     }
 }
 
 pub async fn try_patch_chapter(
-    path: &PathBuf,
+    path: &Path,
     chapter_name: &str,
     len_content: usize,
-    src_dir: &PathBuf,
+    src_dir: &Path,
     book: &MDBookCore,
     patch_registry_ref: &ActorRef<PatchRegistry>,
 ) -> Result<()> {
@@ -272,8 +276,8 @@ pub async fn try_patch_chapter(
 }
 
 pub async fn try_patch_chapter_w_content(
-    path: &PathBuf,
-    src_dir: &PathBuf,
+    path: &Path,
+    src_dir: &Path,
     chapter_name: &str,
     content: String,
     book: &MDBookCore,
@@ -312,7 +316,7 @@ pub async fn try_patch_chapter_w_content(
     Ok(())
 }
 
-async fn load_content_of_chapter(path: &PathBuf, capacity: usize) -> io::Result<String> {
+async fn load_content_of_chapter(path: &Path, capacity: usize) -> io::Result<String> {
     let mut content = String::with_capacity(capacity);
     {
         let mut f = File::open(path).await?;
