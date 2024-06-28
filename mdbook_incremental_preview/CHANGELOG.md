@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.3...mdbook_incremental_preview-v0.0.4) - 2024-06-28
+
+### Added
+- *(lsp)* ignore file watch event for opened files
+- *(lsp)* open browser at opened chapter
+- *(patching)* use `PatchJoinSets`
+- *(patching)* `MDBookCore` to overtake&share preprocessing
+- *(rebuilding)* two-JoinSet to keep oldest+newest rebuilds;
+
+### Other
+- reduce cloning w/ `Arc`
+- `LivePatcher` → `Previewer`
+
 ## [0.0.3](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.2...mdbook_incremental_preview-v0.0.3) - 2024-06-23
 
 ### Added
