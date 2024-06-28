@@ -20,6 +20,14 @@ your editor.
 
 ## Editor Setup
 
+<details><summary>Installation with Cargo.</summary>
+
+```sh
+cargo install mdbook_ls -F=build-binary
+```
+
+</details>
+
 ### ✅ NeoVim setup with LSPConfig
 
 Please paste the below `mdbook_ls_setup` function in
