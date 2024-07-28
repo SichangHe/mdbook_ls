@@ -30,10 +30,11 @@ cargo install mdbook_ls
 
 ### ✅ NeoVim setup with LSPConfig
 
-Please paste the below `mdbook_ls_setup` function in
-your Nvim configuration and call it with your client's `capabilities`.
+Please paste the below `register_mdbook_ls` function in
+your Nvim configuration, call it,
+and then set up `mdbook_ls` like any other LSPConfig language server.
 [Please see my config for an
-example](https://github.com/SichangHe/.config/blob/2a284f52c4d09632ad6e8bdacdd3b2a753736d46/nvim/lua/plugins/lsp.lua#L259).
+example](https://github.com/SichangHe/.config/blob/a01e81bb84dd24ef350882e912d56feb1c3ef9db/nvim/lua/plugins/lsp.lua#L256).
 
 The snippet provides two Vim commands:
 `MDBookLSOpenPreview` starts the preview (if not already started)
@@ -45,7 +46,7 @@ and opens the browser at the chapter you are editing;
 <summary>The <code>mdbook_ls_setup</code> function.</summary>
 
 ```lua
-local function mdbook_ls_setup(capabilities)
+local function register_mdbook_ls()
     local lspconfig = require('lspconfig')
     local function execute_command_with_params(params)
         local clients = lspconfig.util.get_lsp_clients {
@@ -71,7 +72,7 @@ local function mdbook_ls_setup(capabilities)
         execute_command_with_params(params)
     end
 
-    require('lspconfig.configs')['mdbook_ls'] = {
+    require('lspconfig.configs').mdbook_ls = {
         default_config = {
             cmd = { 'mdbook-ls' },
             filetypes = { 'markdown' },
@@ -90,9 +91,6 @@ local function mdbook_ls_setup(capabilities)
         docs = {
             description = [[The mdBook Language Server for previewing mdBook projects live.]],
         },
-    }
-    lspconfig['mdbook_ls'].setup {
-        capabilities = capabilities,
     }
 end
 ```
