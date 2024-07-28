@@ -10,7 +10,7 @@ pub struct PatchRegistry {
     patches: HashMap<PathBuf, (String, watch::Sender<String>)>,
     /// Relative HTTP path of the index chapter.
     index_path: Option<PathBuf>,
-    smart_punctuation: bool,
+    process_cfg: ProcessCfg,
 }
 
 impl Actor for PatchRegistry {
@@ -30,9 +30,11 @@ impl Actor for PatchRegistry {
                         // Update the patch only if it changed.
                         if *markdown != new_markdown {
                             debug!("Updating patch in registry.");
-                            let new_html = block_in_place(|| {
-                                utils::render_markdown(&new_markdown, self.smart_punctuation)
-                            });
+                            let rendered =
+                                block_n_yield(|| self.process_cfg.render_markdown(&new_markdown))
+                                    .await;
+                            let new_html =
+                                block_n_yield(|| self.process_cfg.post_process(rendered)).await;
                             sender.send_modify(|html| *html = new_html);
                         }
                     }
@@ -44,15 +46,15 @@ impl Actor for PatchRegistry {
             }
             PatchRegistryRequest::Rebuild {
                 index_path,
-                smart_punctuation,
+                process_cfg,
             } => {
                 for (_, (_, watcher)) in self.patches.drain() {
                     watcher.send_modify(|v| *v = "__RELOAD".into())
                 }
-                self.smart_punctuation = smart_punctuation;
+                self.process_cfg = process_cfg;
                 if let Some(index_path) = index_path {
                     self.index_path = Some(index_path.with_extension("html"));
-                    debug!(?self.index_path, ?self.smart_punctuation, "Updated index path in patch registry.")
+                    debug!(?self.index_path, ?self.process_cfg, "Updated index path in patch registry.")
                 }
             }
             PatchRegistryRequest::Clear => self.patches.clear(),
@@ -102,7 +104,7 @@ pub enum PatchRegistryRequest {
     /// The book is rebuilt, with an optional new index path.
     Rebuild {
         index_path: Option<PathBuf>,
-        smart_punctuation: bool,
+        process_cfg: ProcessCfg,
     },
     /// Clear the registry, like a soft shutdown.
     Clear,

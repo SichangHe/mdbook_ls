@@ -47,7 +47,7 @@ impl Actor for Rebuilder {
                 self.patch_registry_ref
                     .cast(PatchRegistryRequest::Rebuild {
                         index_path: hbs_state.index_path.clone(),
-                        smart_punctuation: hbs_state.smart_punctuation,
+                        process_cfg: hbs_state.process_cfg.clone(),
                     })
                     .await
                     .context("Clearing the patch registry")?;
@@ -342,7 +342,7 @@ async fn try_load_book(
     let (html_config, theme_dir, theme, handlebars) =
         block_n_yield(|| html_config_n_theme_dir_n_theme_n_handlebars(&render_context)).await?;
     hbs_state
-        .full_render(&render_context, html_config.clone(), &theme, &handlebars)
+        .full_render(render_context, html_config.clone(), &theme, &handlebars)
         .await?;
     info!(
         ?theme_dir,

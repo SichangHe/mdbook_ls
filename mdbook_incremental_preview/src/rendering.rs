@@ -3,7 +3,7 @@ use super::*;
 #[derive(Default)]
 pub struct HtmlHbsState {
     pub path2ctxs: HashMap<Arc<Path>, CtxCore>,
-    pub smart_punctuation: bool,
+    pub process_cfg: ProcessCfg,
     /// Relative path of the source file of the index chapter.
     pub index_path: Option<PathBuf>,
 }
@@ -12,6 +12,29 @@ pub struct HtmlHbsState {
 pub struct CtxCore {
     pub chapter_name: Arc<str>,
     pub len_content: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ProcessCfg {
+    pub smart_punctuation: bool,
+    pub playground_config: Playground,
+    pub code_config: Code,
+    pub edition: Option<RustEdition>,
+}
+
+impl ProcessCfg {
+    pub fn render_markdown(&self, markdown: &str) -> String {
+        utils::render_markdown(markdown, self.smart_punctuation)
+    }
+
+    pub fn post_process(&self, rendered: String) -> String {
+        RENDERER.post_process(
+            rendered,
+            &self.playground_config,
+            &self.code_config,
+            self.edition,
+        )
+    }
 }
 
 pub const RENDERER: HtmlHandlebars = HtmlHandlebars {};
@@ -66,7 +89,7 @@ impl HtmlHbsState {
     /// save intermediate state.
     pub async fn full_render(
         &mut self,
-        ctx: &RenderContext,
+        ctx: RenderContext,
         html_config: HtmlConfig,
         theme: &Theme,
         handlebars: &Handlebars<'_>,
@@ -95,7 +118,6 @@ impl HtmlHbsState {
             .await
             .with_context(|| "Unexpected error when constructing destination path")?;
 
-        self.smart_punctuation = html_config.smart_punctuation();
         let mut is_index = true;
         self.path2ctxs.clear();
         let items = || {
@@ -146,7 +168,7 @@ impl HtmlHbsState {
         // Render 404 page
         if html_config.input_404 != Some("".to_string()) {
             block_n_yield(|| {
-                RENDERER.render_404(ctx, &html_config, &src_dir, handlebars, &mut data)
+                RENDERER.render_404(&ctx, &html_config, &src_dir, handlebars, &mut data)
             })
             .await?;
         }
@@ -179,7 +201,7 @@ impl HtmlHbsState {
         }
 
         // Render search index
-        let search = html_config.search.unwrap_or_default();
+        let search = html_config.search.clone().unwrap_or_default();
         if search.enable {
             debug!("Search indexing");
             block_n_yield(|| search::create_files(&search, destination, book)).await?;
@@ -191,6 +213,14 @@ impl HtmlHbsState {
         })
         .await
         .context("Unable to emit redirects")?;
+
+        // Save post-process configuration.
+        self.process_cfg = ProcessCfg {
+            smart_punctuation: html_config.smart_punctuation(),
+            playground_config: html_config.playground,
+            code_config: html_config.code,
+            edition: ctx.config.rust.edition,
+        };
 
         Ok(())
     }

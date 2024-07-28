@@ -17,7 +17,7 @@ use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
 use mdbook::{
     book::{preprocessor_should_run, Book, Chapter},
-    config::HtmlConfig,
+    config::{Code, HtmlConfig, Playground, RustEdition},
     errors::*,
     preprocess::{Preprocessor, PreprocessorContext},
     renderer::{
