@@ -13,9 +13,9 @@ drop_this = { version = "0.0", features = ["tokio"] }
 futures-util = "0.3"
 handlebars = "5"
 ignore = "0.4"
-mdbook = { package = "mdbook_fork4ls", path = "mdbook_fork4ls", version = "0.4.41-patch.2", default_features = false, features = [
+mdbook = { package = "mdbook_fork4ls", path = "mdbook_fork4ls", version = "0.4.41-patch.2", features = [
     "search",
-] }
+], default-features = false }
 mdbook_incremental_preview = { path = "mdbook_incremental_preview", version = "0.0" }
 notify = "6"
 notify-debouncer-mini = "0.4"
@@ -31,14 +31,14 @@ tokio_two_join_set = "0.0"
 tokio-util = "0.7"
 toml = "=0.5.11" # Do not update, see https://github.com/rust-lang/mdBook/issues/2037
 tower-lsp = "0.20"
-tracing = { version = "0.1", default_features = false }
-tracing-subscriber = { version = "0.3", default_features = false, features = [
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", features = [
     "ansi",
     "env-filter",
     "fmt",
     "smallvec",
     "tracing-log",
-] }
+], default-features = false }
 warp = { version = "0.3", default-features = false, features = ["websocket"] }
 
 [package]
