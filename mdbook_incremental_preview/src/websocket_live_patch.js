@@ -12,6 +12,8 @@
         contentElement.innerHTML = event.data;
         document.dispatchEvent(new Event("load"));
         if (window.hljs && window.hljs.initHighlighting) {
+            // Re-highlight with highlight.js.
+            window.hljs.initHighlighting.called = false;
             window.hljs.initHighlighting();
         }
     };
