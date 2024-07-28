@@ -20,10 +20,10 @@ your editor.
 
 ## Editor Setup
 
-<details><summary>Installation with Cargo.</summary>
+<details><summary>Installation with, e.g., Cargo.</summary>
 
 ```sh
-cargo install mdbook_ls -F=build-binary
+cargo install mdbook_ls
 ```
 
 </details>
