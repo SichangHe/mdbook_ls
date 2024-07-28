@@ -11,5 +11,8 @@
         }
         contentElement.innerHTML = event.data;
         document.dispatchEvent(new Event("load"));
+        if (window.hljs && window.hljs.initHighlighting) {
+            window.hljs.initHighlighting();
+        }
     };
 })();
