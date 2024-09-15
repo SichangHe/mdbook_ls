@@ -14,15 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache Rust registry based on toml file
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/registry/cache/
-          key: rust-${{ hashFiles('Cargo.toml') }}
-      - uses: mozilla-actions/sccache-action@v0.0.3
+          key: rust-${{ hashFiles('Cargo.toml', 'mdbook_fork4ls/Cargo.toml', 'mdbook_incremental_preview/Cargo.toml') }}
+      - uses: mozilla-actions/sccache-action@v0.0.5
       - run: cargo test --workspace
 
   clippy:
@@ -30,15 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache Rust registry based on toml file
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/registry/cache/
-          key: rust-${{ hashFiles('Cargo.toml') }}
-      - uses: mozilla-actions/sccache-action@v0.0.3
+          key: rust-${{ hashFiles('Cargo.toml', 'mdbook_fork4ls/Cargo.toml', 'mdbook_incremental_preview/Cargo.toml') }}
+      - uses: mozilla-actions/sccache-action@v0.0.5
       - run: cargo clippy --workspace
 
   rustfmt:
@@ -46,15 +44,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           submodules: true
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
-      - name: Cache Rust registry based on toml file
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/registry/cache/
-          key: rust-${{ hashFiles('Cargo.toml') }}
-      - uses: mozilla-actions/sccache-action@v0.0.3
       - run: cargo fmt -- --check
