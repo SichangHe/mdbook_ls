@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "mdbook_incremental_preview", "mdbook_fork4ls"]
+members = [".", "mdbook_incremental_preview"]
 
 [workspace.package]
 edition = "2021"
@@ -11,9 +11,9 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 drop_this = { version = "0.0", features = ["tokio"] }
 futures-util = "0.3"
-handlebars = "5"
+handlebars = "6"
 ignore = "0.4"
-mdbook = { package = "mdbook_fork4ls", path = "mdbook_fork4ls", version = "0.4.41-patch.2", features = [
+mdbook = { package = "mdbook_fork4ls", version = "0.4.41", features = [
     "search",
 ], default-features = false }
 mdbook_incremental_preview = { path = "mdbook_incremental_preview", version = "0.0" }

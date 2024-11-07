@@ -9,6 +9,7 @@ on:
     branches:
       - main
     paths:
+      - 'mdbook_fork4ls/Cargo.toml'
       - '.github/workflows/release-plz.yml'
       - '**.rs'
       - '**Cargo.toml'
@@ -21,9 +22,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz
