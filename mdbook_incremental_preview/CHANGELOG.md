@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.5...mdbook_incremental_preview-v0.0.6) - 2024-11-07
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [0.0.5](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.4...mdbook_incremental_preview-v0.0.5) - 2024-07-28
 
 ### Fixed
