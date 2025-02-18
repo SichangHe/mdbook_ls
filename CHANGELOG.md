@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/SichangHe/mdbook_ls/compare/mdbook_ls-v0.0.3...mdbook_ls-v0.0.4) - 2025-02-18
+
+### Other
+
+- use mdbook 0.4.45
+
 ## [0.0.3](https://github.com/SichangHe/mdbook_ls/compare/mdbook_ls-v0.0.2...mdbook_ls-v0.0.3) - 2024-11-07
 
 ### Other
