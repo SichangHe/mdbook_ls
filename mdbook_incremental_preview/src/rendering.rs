@@ -78,6 +78,10 @@ pub fn html_config_n_theme_dir_n_theme_n_handlebars(
     debug!("Register the header handlebars template");
     handlebars.register_partial("header", String::from_utf8(theme.header.clone())?)?;
 
+    debug!("Register the toc handlebars template");
+    handlebars.register_template_string("toc_js", String::from_utf8(theme.toc_js.clone())?)?;
+    handlebars.register_template_string("toc_html", String::from_utf8(theme.toc_html.clone())?)?;
+
     debug!("Register handlebars helpers");
     RENDERER.register_hbs_helpers(&mut handlebars, &html_config);
 
@@ -198,6 +202,18 @@ impl HtmlHbsState {
             block_n_yield(|| utils::fs::write_file(destination, "print.html", rendered.as_bytes()))
                 .await?;
             debug!("Created print.html ✓");
+        }
+
+        debug!("Render toc");
+        {
+            let rendered_toc = handlebars.render("toc_js", &data)?;
+            utils::fs::write_file(destination, "toc.js", rendered_toc.as_bytes())?;
+            debug!("Creating toc.js ✓");
+            data.insert("is_toc_html".to_owned(), json!(true));
+            let rendered_toc = handlebars.render("toc_html", &data)?;
+            utils::fs::write_file(destination, "toc.html", rendered_toc.as_bytes())?;
+            debug!("Creating toc.html ✓");
+            data.remove("is_toc_html");
         }
 
         // Render search index

@@ -13,12 +13,12 @@ drop_this = { version = "0.0", features = ["tokio"] }
 futures-util = "0.3"
 handlebars = "6"
 ignore = "0.4"
-mdbook = { package = "mdbook_fork4ls", version = "0.4.41", features = [
+mdbook = { package = "mdbook_fork4ls", version = "0.4.45", features = [
     "search",
 ], default-features = false }
 mdbook_incremental_preview = { path = "mdbook_incremental_preview", version = "0.0" }
-notify = "6"
-notify-debouncer-mini = "0.4"
+notify = "8"
+notify-debouncer-mini = "0.6"
 once_cell = "1"
 opener = "0.7"
 pathdiff = "0.2"
