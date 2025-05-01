@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/SichangHe/mdbook_ls/compare/mdbook_ls-v0.0.4...mdbook_ls-v0.0.5) - 2025-05-01
+
+### Other
+
+- update to mdbook_fork4ls v0.4.48 & tokio_gen_server
+
 ## [0.0.4](https://github.com/SichangHe/mdbook_ls/compare/mdbook_ls-v0.0.3...mdbook_ls-v0.0.4) - 2025-02-18
 
 ### Other
