@@ -14,11 +14,11 @@ pub struct PatchRegistry {
 }
 
 impl Actor for PatchRegistry {
-    type L = PatchRegistryQuery;
-    type T = PatchRegistryRequest;
-    type R = PatchRegistryResponse;
+    type Call = PatchRegistryQuery;
+    type Cast = PatchRegistryRequest;
+    type Reply = PatchRegistryResponse;
 
-    async fn handle_cast(&mut self, msg: Self::T, _env: &mut ActorRef<Self>) -> Result<()> {
+    async fn handle_cast(&mut self, msg: Self::Cast, _env: &mut ActorEnv<Self>) -> Result<()> {
         match msg {
             PatchRegistryRequest::NewPatch(path, new_markdown) => {
                 debug!(?path, "Registry received patch.");
@@ -64,9 +64,9 @@ impl Actor for PatchRegistry {
 
     async fn handle_call(
         &mut self,
-        msg: Self::L,
-        _env: &mut ActorRef<Self>,
-        response_sender: oneshot::Sender<Self::R>,
+        msg: Self::Call,
+        _env: &mut ActorEnv<Self>,
+        response_sender: oneshot::Sender<Self::Reply>,
     ) -> Result<()> {
         debug!(?msg, "PatchRegistry::handle_call");
         match msg {

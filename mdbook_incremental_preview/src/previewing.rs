@@ -10,10 +10,10 @@ pub struct Previewer {
     versions: HashMap<PathBuf, i32>,
     ignored_paths: IgnoredPaths,
     patch_registry: Option<(
-        ActorHandle<ActorMsg<PatchRegistry>>,
+        JoinHandle<ActorRunResult<PatchRegistry>>,
         ActorRef<PatchRegistry>,
     )>,
-    rebuilder: Option<(ActorHandle<ActorMsg<Rebuilder>>, ActorRef<Rebuilder>)>,
+    rebuilder: Option<(JoinHandle<ActorRunResult<Rebuilder>>, ActorRef<Rebuilder>)>,
     server: Option<JoinHandle<()>>,
 }
 
@@ -109,10 +109,10 @@ impl Previewer {
 }
 
 impl Actor for Previewer {
-    type L = ();
-    type T = PreviewInfo;
-    type R = ();
-    async fn handle_cast(&mut self, msg: Self::T, env: &mut ActorRef<Self>) -> Result<()> {
+    type Call = ();
+    type Cast = PreviewInfo;
+    type Reply = ();
+    async fn handle_cast(&mut self, msg: Self::Cast, env: &mut ActorEnv<Self>) -> Result<()> {
         match msg {
             PreviewInfo::BookRoot(book_root) if book_root == *self.book_root => {
                 debug!(?book_root, "Ignoring unchanged.");
@@ -123,7 +123,7 @@ impl Actor for Previewer {
                 if self.rebuilder.is_some() {
                     info!("Restarting live patching.");
                     self.stop().await;
-                    self.start(env).await;
+                    self.start(&env.ref_).await;
                 }
             }
             PreviewInfo::OpenPreview {
@@ -141,7 +141,7 @@ impl Actor for Previewer {
                             ref_.cast(msg).await.drop_result();
                         }
                     }
-                    None => self.start(env).await,
+                    None => self.start(&env.ref_).await,
                 }
             }
             PreviewInfo::StopPreview => {
@@ -198,8 +198,7 @@ impl Actor for Previewer {
     async fn before_exit(
         &mut self,
         run_result: Result<()>,
-        _env: &mut ActorRef<Self>,
-        _msg_receiver: &mut mpsc::Receiver<ActorMsg<Self>>,
+        _env: &mut ActorEnv<Self>,
     ) -> Result<()> {
         self.stop().await;
         if let Some((handle, actor_ref)) = mem::take(&mut self.patch_registry) {

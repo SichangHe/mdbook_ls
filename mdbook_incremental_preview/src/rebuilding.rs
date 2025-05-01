@@ -15,17 +15,20 @@ pub struct Rebuilder {
 }
 
 impl Actor for Rebuilder {
-    type L = ();
-    type T = RebuildInfo;
-    type R = ();
+    type Call = ();
+    type Cast = RebuildInfo;
+    type Reply = ();
 
-    async fn init(&mut self, env: &mut ActorRef<Self>) -> Result<()> {
+    async fn init(&mut self, env: &mut ActorEnv<Self>) -> Result<()> {
         // Start with a full reload.
-        env.cast(RebuildInfo::Rebuild(true)).await.drop_result();
+        env.ref_
+            .cast(RebuildInfo::Rebuild(true))
+            .await
+            .drop_result();
         Ok(())
     }
 
-    async fn handle_cast(&mut self, msg: Self::T, env: &mut ActorRef<Self>) -> Result<()> {
+    async fn handle_cast(&mut self, msg: Self::Cast, env: &mut ActorEnv<Self>) -> Result<()> {
         match msg {
             RebuildInfo::Rebuild(reload) => {
                 info!(?self.build_dir, "Full rebuild.");
@@ -33,7 +36,7 @@ impl Actor for Rebuilder {
                     self.book_root.clone(),
                     self.build_dir.clone(),
                     reload,
-                    env.clone(),
+                    env.ref_.clone(),
                 ));
             }
             RebuildInfo::NewBook(data) => {
@@ -52,7 +55,7 @@ impl Actor for Rebuilder {
                     .await
                     .context("Clearing the patch registry")?;
                 if reload {
-                    self.handle_reload(&book, &html_config, &theme_dir, env)
+                    self.handle_reload(&book, &html_config, &theme_dir, &env.ref_)
                         .await?;
                 }
                 let m = &mut self.mutables;
@@ -60,7 +63,7 @@ impl Actor for Rebuilder {
                     (book.into(), html_config, theme_dir, hbs_state);
                 // Re-patch the chapters patched after a rebuild.
                 let paths = running_patch_join_sets(&mut m.patch_join_sets);
-                let (env, msg) = (env.clone(), RebuildInfo::ChangedPaths(paths));
+                let (env, msg) = (env.ref_.clone(), RebuildInfo::ChangedPaths(paths));
                 spawn(async move { env.cast(msg).await.drop_result() });
             }
             RebuildInfo::ChangedPaths(paths) => {
@@ -89,7 +92,7 @@ impl Actor for Rebuilder {
                 debug!(full_rebuild);
 
                 match full_rebuild {
-                    Some(reload) => self.send_rebuild_info(env.clone(), reload),
+                    Some(reload) => self.send_rebuild_info(env.ref_.clone(), reload),
                     None => {
                         let (b, ref_, sets) =
                             (&m.book, &self.patch_registry_ref, &mut m.patch_join_sets);
@@ -339,10 +342,10 @@ async fn try_load_book(
     let mut book = block_n_yield(|| MDBook::load(book_root)).await?;
     config_book_for_live_reload(&mut book).context("configuring the book for live reload")?;
     let render_context = block_n_yield(|| make_render_context(&book, build_dir)).await?;
-    let (html_config, theme_dir, theme, handlebars) =
+    let (html_config, theme_dir, theme, mut handlebars) =
         block_n_yield(|| html_config_n_theme_dir_n_theme_n_handlebars(&render_context)).await?;
     hbs_state
-        .full_render(render_context, html_config.clone(), &theme, &handlebars)
+        .full_render(render_context, html_config.clone(), &theme, &mut handlebars)
         .await?;
     info!(
         ?theme_dir,

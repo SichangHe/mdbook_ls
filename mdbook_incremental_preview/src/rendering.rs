@@ -49,6 +49,8 @@ pub fn html_config_n_theme_dir_n_theme_n_handlebars(
         let mut h = ctx.config.html_config().unwrap_or_default();
         // NOTE: Inject the JavaScript for live patching.
         h.additional_js.push(LIVE_PATCH_PATH.into());
+        // NOTE: We do not support search to reduce complexity.
+        h.search = None;
         h
     };
 
@@ -96,7 +98,7 @@ impl HtmlHbsState {
         ctx: RenderContext,
         html_config: HtmlConfig,
         theme: &Theme,
-        handlebars: &Handlebars<'_>,
+        handlebars: &mut Handlebars<'_>,
     ) -> Result<()> {
         info!("Running the html backend for a full render.");
         let book_config = &ctx.config.book;
@@ -121,6 +123,58 @@ impl HtmlHbsState {
         fs::create_dir_all(destination)
             .await
             .with_context(|| "Unexpected error when constructing destination path")?;
+
+        debug!("Render toc js");
+        {
+            let rendered_toc = handlebars.render("toc_js", &data)?;
+            utils::fs::write_file(destination, "toc.js", rendered_toc.as_bytes())?;
+            debug!("Creating toc.js ✓");
+        }
+
+        // NOTE: We do not support `hash_files` because it makes no sense for
+        // the preview server, thus the "resource" helper is a dummy adapted from
+        // <https://github.com/rust-lang/mdBook/blob/23abd20589f046c5d87ee1a81c6a77b3603ffd79/src/renderer/html_handlebars/helpers/resources.rs>.
+        fn dummy_resource_helper(
+            h: &handlebars::Helper<'_>,
+            _: &Handlebars<'_>,
+            ctx: &handlebars::Context,
+            rc: &mut handlebars::RenderContext<'_, '_>,
+            out: &mut dyn handlebars::Output,
+        ) -> handlebars::HelperResult {
+            let param = h.param(0).and_then(|v| v.value().as_str()).ok_or_else(|| {
+                handlebars::RenderErrorReason::Other(
+                    "Param 0 with String type is required for theme_option helper.".to_owned(),
+                )
+            })?;
+
+            let base_path = rc
+                .evaluate(ctx, "@root/path")?
+                .as_json()
+                .as_str()
+                .ok_or_else(|| {
+                    handlebars::RenderErrorReason::Other(
+                        "Type error for `path`, string expected".to_owned(),
+                    )
+                })?
+                .replace("\"", "");
+
+            let path_to_root = utils::fs::path_to_root(&base_path);
+
+            out.write(&path_to_root)?;
+            out.write(param).map_err(Into::into)
+        }
+        handlebars.register_helper("resource", Box::new(dummy_resource_helper));
+
+        debug!("Render toc html");
+        {
+            data.insert("is_toc_html".to_owned(), json!(true));
+            data.insert("path".to_owned(), json!("toc.html"));
+            let rendered_toc = handlebars.render("toc_html", &data)?;
+            utils::fs::write_file(destination, "toc.html", rendered_toc.as_bytes())?;
+            debug!("Creating toc.html ✓");
+            data.remove("path");
+            data.remove("is_toc_html");
+        }
 
         let mut is_index = true;
         self.path2ctxs.clear();
@@ -202,25 +256,6 @@ impl HtmlHbsState {
             block_n_yield(|| utils::fs::write_file(destination, "print.html", rendered.as_bytes()))
                 .await?;
             debug!("Created print.html ✓");
-        }
-
-        debug!("Render toc");
-        {
-            let rendered_toc = handlebars.render("toc_js", &data)?;
-            utils::fs::write_file(destination, "toc.js", rendered_toc.as_bytes())?;
-            debug!("Creating toc.js ✓");
-            data.insert("is_toc_html".to_owned(), json!(true));
-            let rendered_toc = handlebars.render("toc_html", &data)?;
-            utils::fs::write_file(destination, "toc.html", rendered_toc.as_bytes())?;
-            debug!("Creating toc.html ✓");
-            data.remove("is_toc_html");
-        }
-
-        // Render search index
-        let search = html_config.search.clone().unwrap_or_default();
-        if search.enable {
-            debug!("Search indexing");
-            block_n_yield(|| search::create_files(&search, destination, book)).await?;
         }
 
         debug!("Emitting redirects");

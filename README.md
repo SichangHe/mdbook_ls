@@ -31,16 +31,15 @@ cargo install mdbook_ls
 ### ✅ NeoVim setup with LSPConfig
 
 Please paste the below `register_mdbook_ls` function in
-your Nvim configuration, call it,
-and then set up `mdbook_ls` like any other LSPConfig language server.
-[Please see my config for an
+your Nvim configuration, call it, and then set up `mdbook_ls`
+like any other LSPConfig language server. [Please see my config for an
 example](https://github.com/SichangHe/.config/blob/a01e81bb84dd24ef350882e912d56feb1c3ef9db/nvim/lua/plugins/lsp.lua#L256).
 
-The snippet provides two Vim commands:
-`MDBookLSOpenPreview` starts the preview (if not already started)
-and opens the browser at the chapter you are editing;
-`MDBookLSStopPreview` stops updating the preview
-(Warp may keep serving on the port despite being cancelled).
+The snippet provides two Vim commands: `MDBookLSOpenPreview`
+starts the preview (if not already started) and
+opens the browser at the chapter you are editing; `MDBookLSStopPreview`
+stops updating the preview (Warp may keep serving on
+the port despite being cancelled).
 
 <details>
 <summary>The <code>mdbook_ls_setup</code> function.</summary>
@@ -104,14 +103,12 @@ I plan to merge this into [nvim-lspconfig] in the future.
 <details>
 <summary>No official support, but community plugins are welcome.</summary>
 
-I do not currently use VSCode and these other editors,
-so I do not wish to maintain plugins for them.
+I do not currently use VSCode and these other editors, so I do not wish to
+maintain plugins for them.
 
-However,
-it should be straightforward to implement plugins for them since
+However, it should be straightforward to implement plugins for them since
 mdBook-LS implements the Language Server Protocol (LSP).
-So,
-please feel free to make a plugin yourself and create an issue for me to
+So, please feel free to make a plugin yourself and create an issue for me to
 link it here.
 
 </details>
@@ -124,10 +121,9 @@ file saves.
 
 mdBook-Incremental-Preview provides incremental preview building for
 mdBook projects.
-Unlike `mdbook watch` or `mdbook serve`,
-which are inefficient because they rebuild the whole book on file changes,
-`mdBook-incremental-preview` only patches the changed chapters,
-thus producing instant updates.
+Unlike `mdbook watch` or `mdbook serve`, which are inefficient because
+they rebuild the whole book on file changes, `mdBook-incremental-preview`
+only patches the changed chapters, thus producing instant updates.
 
 ### Usage of mdBook Incremental Preview
 
@@ -142,57 +138,58 @@ It has basically the same functionality as `mdbook serve` but incremental:
 - Chapter changes are patched individually and pushed to the browser,
     without refresh.
 - Full rebuilds happen only when the `.gitignore`, `book.toml`, `SUMMARY.md`,
-    or the theme directory changes,
-    or a patched page is requested by a new client.
+    or the theme directory changes, or a patched page is requested by
+    a new client.
     <!-- NOTE: We need to rebuild on theme changes because of templates. -->
 - Build artifacts are stored in a temporary directory in memory.
-- It directly serves static files, additional JS & CSS,
-    and asset files from the source directory, instead of copying them.
+- It directly serves static files, additional JS & CSS, and asset files from
+    the source directory, instead of copying them.
 
 ### Details of patching
 
-When a chapter changes,
-we push its patched content to the corresponding browser tabs and
-replace the contents of their `<main>` elements.
+When a chapter changes, we push its patched content to
+the corresponding browser tabs and replace the contents of their `<main>`
+elements.
 So, the browser does not reload the page, but updates the content instantly.
 
-After replacing the content,
-our injected script issues a [`load` window event][load-event].
+After replacing the content, our injected script issues a [`load`
+window event][load-event].
 You should listen to this event to rerun any JavaScript code as needed.
 An example is below in [the MathJax support section](#mathjax-support).
 
 ### Current limitations of patching
 
 - Preprocessors that operate across multiple book item are not supported.
-    The results may be incorrect,
-    or the implementation may fall back to a full rebuild.
+    The results may be incorrect, or the implementation may fall back to
+    a full rebuild.
     This is because
     we feed the preprocessors the individual chapters rather than
     the whole book when patching.
 
-    This is irrelevant for most preprocessors,
-    which operate on a single chapter.
+    This is irrelevant for most preprocessors, which operate on
+    a single chapter.
     Even the `link` preprocessor works because
     it reads the input files directly.
 - Neither `print.html` or the search index are updated incrementally.
-    They are only rebuilt on full rebuilds,
-    which can be triggered by refreshing a patched page.
-- The book template (`index.hbs`)
-    has to include exactly `{{ content }}` in the `<main>` tag (the default),
+    They are only rebuilt on full rebuilds, which can be triggered by
+    refreshing a patched page.
+- The book template (`index.hbs`) has to include exactly `{{ content }}` in
+    the `<main>` tag (the default),
     otherwise the patching will not work correctly.
-    A workaround would be to allow custom injected scripts,
-    but I will not implement that unless demanded.
+    A workaround would be to allow custom injected scripts, but
+    I will not implement that unless demanded.
+- Search support has been disabled to reduce complexity and overhead.
+    It is not that useful for live preview anyway.
 
 ### MathJax support
 
-`MathJax.js` is too slow for live preview,
-so you should instead consider [mdBook-KaTeX], [client-side KaTeX]
-(with a custom script that listens to the `load` event, as mentioned above),
-or other alternatives.
+`MathJax.js` is too slow for live preview, so
+you should instead consider [mdBook-KaTeX], [client-side KaTeX]
+(with a custom script that listens to the `load` event, as mentioned above), or
+other alternatives.
 
-If you have to stick with MathJax,
-please add a custom script that listens to the `load` event and reruns MathJax,
-like this:
+If you have to stick with MathJax, please add a custom script that listens to
+the `load` event and reruns MathJax, like this:
 
 ```javascript
 document.addEventListener("load", () => MathJax.Hub.Typeset());

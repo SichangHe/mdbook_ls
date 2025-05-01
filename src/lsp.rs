@@ -1,11 +1,11 @@
+use tokio::task::JoinHandle;
 use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer};
 
 use super::*;
 
-#[derive(Debug)]
 pub struct MDBookLS {
     client: Client,
-    live_patcher_handle: ActorHandle<ActorMsg<Previewer>>,
+    live_patcher_handle: JoinHandle<ActorRunResult<Previewer>>,
     live_patcher: ActorRef<Previewer>,
 }
 

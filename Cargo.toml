@@ -13,9 +13,7 @@ drop_this = { version = "0.0", features = ["tokio"] }
 futures-util = "0.3"
 handlebars = "6"
 ignore = "0.4"
-mdbook = { package = "mdbook_fork4ls", version = "0.4.45", features = [
-    "search",
-], default-features = false }
+mdbook = { package = "mdbook_fork4ls", version = "0.4.48", default-features = false }
 mdbook_incremental_preview = { path = "mdbook_incremental_preview", version = "0.0" }
 notify = "8"
 notify-debouncer-mini = "0.6"
@@ -26,7 +24,7 @@ regex = "1"
 serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
-tokio_gen_server = "0.4"
+tokio_gen_server = "0.5"
 tokio_two_join_set = "0.0"
 tokio-util = "0.7"
 toml = "=0.5.11" # Do not update, see https://github.com/rust-lang/mdBook/issues/2037

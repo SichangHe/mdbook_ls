@@ -21,10 +21,7 @@ use mdbook::{
     errors::*,
     preprocess::{Preprocessor, PreprocessorContext},
     renderer::{
-        html_handlebars::{
-            hbs_renderer::{make_data, RenderItemContext},
-            search,
-        },
+        html_handlebars::hbs_renderer::{make_data, RenderItemContext},
         HtmlHandlebars, RenderContext,
     },
     theme::{self, playground_editor, Theme},
@@ -112,7 +109,7 @@ where
 }
 
 async fn shut_down_actor_n_log_err<A: Actor>(
-    handle: ActorHandle<ActorMsg<A>>,
+    handle: JoinHandle<ActorRunResult<A>>,
     actor_ref: ActorRef<A>,
     err_msg: &'static str,
 ) {
@@ -122,8 +119,8 @@ async fn shut_down_actor_n_log_err<A: Actor>(
     }
 }
 
-async fn try_join_actor_handle<T>(handle: ActorHandle<T>) -> Result<()> {
-    handle.await?.1
+async fn try_join_actor_handle<A: Actor>(handle: JoinHandle<ActorRunResult<A>>) -> Result<()> {
+    handle.await?.exit_result
 }
 
 fn open<P: AsRef<OsStr>>(path: P) {
