@@ -40,27 +40,18 @@ pub async fn serve_reloading(
 #[derive(Clone, Debug)]
 pub struct ServeInfo {
     pub src_dir: PathBuf,
-    pub theme_dir: PathBuf,
-    pub additional_css: Vec<PathBuf>,
-    pub additional_js: Vec<PathBuf>,
     pub file_404: PathBuf,
 }
 
 pub async fn serve(
-    book_root: PathBuf,
+    _book_root: PathBuf,
     build_dir: PathBuf,
     address: SocketAddr,
     rebuilder_ref: ActorRef<Rebuilder>,
     info: ServeInfo,
     patch_registry_ref: ActorRef<PatchRegistry>,
 ) {
-    let ServeInfo {
-        src_dir,
-        theme_dir,
-        additional_css,
-        additional_js,
-        file_404,
-    } = info;
+    let ServeInfo { src_dir, file_404 } = info;
 
     // Handle WebSockets for live-patching.
     let p_ref = patch_registry_ref.clone();
@@ -86,10 +77,6 @@ pub async fn serve(
         .untuple_one()
         .and(warp::fs::dir(build_dir.clone()));
 
-    let no_copy_static_files = warp::fs::dir(theme_dir).or(static_files_filter());
-    let no_copy_additional_css_and_js =
-        additional_js_css_filter(book_root, &additional_js, &additional_css);
-
     let no_copy_files_except_ext = warp::path::full()
         .and_then(move |full_path: FullPath| async move {
             match full_path.as_str().ends_with(".md") {
@@ -105,8 +92,7 @@ pub async fn serve(
         .map(|reply| warp::reply::with_status(reply, warp::http::StatusCode::NOT_FOUND));
     let routes = live_patch
         .or(build_artifact)
-        .or(no_copy_static_files)
-        .or(no_copy_additional_css_and_js)
+        .or(live_patch_script_filter())
         // Fall back to the source directory for assets.
         .or(no_copy_files_except_ext)
         .or(fallback_route);
@@ -176,157 +162,24 @@ async fn filter_patched_path(
     Ok(())
 }
 
-const CONTENT_TYPE: &str = "Content-Type";
 const JS_CONTENT_TYPE: &str = "application/javascript";
-const CSS_CONTENT_TYPE: &str = "text/css";
-const TTF_CONTENT_TYPE: &str = "font/ttf";
-const SVG_CONTENT_TYPE: &str = "image/svg+xml";
-const WOFF2_CONTENT_TYPE: &str = "font/woff2";
-const TXT_CONTENT_TYPE: &str = "text/plain";
 
 /// URL path to the JavaScript for live patching.
 pub const LIVE_PATCH_PATH: &str = "__mdbook_incremental_preview/websocket_live_patch.js";
 const LIVE_PATCH_JS: &[u8] = include_bytes!("websocket_live_patch.js");
 
-/// Mirror the content and order in `HtmlHandlebars::copy_static_files` but
-/// serve them directly instead of copying.
-///
-/// Additionally, serves the JavaScript for live patching.
-///
-/// `.nojekyll` and `CNAME` are not included.
-pub fn static_files_filter() -> BoxedFilter<(WithHeader<&'static [u8]>,)> {
-    let path2content_n_types: HashMap<&'static str, (&'static [u8], &'static str)> =
-        HashMap::from_iter(
-            [
-                // Fallback theme.
-                ("book.js", (theme::JS, JS_CONTENT_TYPE)),
-                ("css/chrome.css", (theme::CHROME_CSS, CSS_CONTENT_TYPE)),
-                ("css/general.css", (theme::GENERAL_CSS, CSS_CONTENT_TYPE)),
-                ("css/print.css", (theme::PRINT_CSS, CSS_CONTENT_TYPE)),
-                (
-                    "css/variables.css",
-                    (theme::VARIABLES_CSS, CSS_CONTENT_TYPE),
-                ),
-                ("favicon.png", (theme::FAVICON_PNG, "image/png")),
-                ("favicon.svg", (theme::FAVICON_SVG, SVG_CONTENT_TYPE)),
-                ("highlight.css", (theme::HIGHLIGHT_CSS, CSS_CONTENT_TYPE)),
-                (
-                    "tomorrow-night.css",
-                    (theme::TOMORROW_NIGHT_CSS, CSS_CONTENT_TYPE),
-                ),
-                (
-                    "ayu-highlight.css",
-                    (theme::AYU_HIGHLIGHT_CSS, CSS_CONTENT_TYPE),
-                ),
-                ("highlight.js", (theme::HIGHLIGHT_JS, JS_CONTENT_TYPE)),
-                ("clipboard.min.js", (theme::CLIPBOARD_JS, JS_CONTENT_TYPE)),
-                // Font Awesome.
-                (
-                    "FontAwesome/css/font-awesome.css",
-                    (theme::FONT_AWESOME, CSS_CONTENT_TYPE),
-                ),
-                (
-                    "FontAwesome/fonts/fontawesome-webfont.eot",
-                    (theme::FONT_AWESOME_EOT, "application/vnd.ms-fontobject"),
-                ),
-                (
-                    "FontAwesome/fonts/fontawesome-webfont.svg",
-                    (theme::FONT_AWESOME_SVG, SVG_CONTENT_TYPE),
-                ),
-                (
-                    "FontAwesome/fonts/fontawesome-webfont.ttf",
-                    (theme::FONT_AWESOME_TTF, TTF_CONTENT_TYPE),
-                ),
-                (
-                    "FontAwesome/fonts/fontawesome-webfont.woff",
-                    (theme::FONT_AWESOME_WOFF, "font/woff"),
-                ),
-                (
-                    "FontAwesome/fonts/fontawesome-webfont.woff2",
-                    (theme::FONT_AWESOME_WOFF2, WOFF2_CONTENT_TYPE),
-                ),
-                (
-                    "FontAwesome/fonts/FontAwesome.ttf",
-                    (theme::FONT_AWESOME_TTF, TTF_CONTENT_TYPE),
-                ),
-                // Fallback font.
-                ("fonts/fonts.css", (theme::fonts::CSS, CSS_CONTENT_TYPE)),
-                // Playground.
-                ("editor.js", (playground_editor::JS, JS_CONTENT_TYPE)),
-                ("ace.js", (playground_editor::ACE_JS, JS_CONTENT_TYPE)),
-                (
-                    "mode-rust.js",
-                    (playground_editor::MODE_RUST_JS, JS_CONTENT_TYPE),
-                ),
-                (
-                    "theme-dawn.js",
-                    (playground_editor::THEME_DAWN_JS, JS_CONTENT_TYPE),
-                ),
-                (
-                    "theme-tomorrow_night.js",
-                    (playground_editor::THEME_TOMORROW_NIGHT_JS, JS_CONTENT_TYPE),
-                ),
-                // JavaScript for live patching.
-                (LIVE_PATCH_PATH, (LIVE_PATCH_JS, JS_CONTENT_TYPE)),
-            ]
-            .into_iter()
-            // Other fallback fonts.
-            .chain(
-                theme::fonts::LICENSES
-                    .into_iter()
-                    .map(|(path, content)| (path, (content, TXT_CONTENT_TYPE))),
-            )
-            .chain(
-                theme::fonts::OPEN_SANS
-                    .into_iter()
-                    .chain(iter::once(theme::fonts::SOURCE_CODE_PRO))
-                    .map(|(path, content)| (path, (content, WOFF2_CONTENT_TYPE))),
-            ),
-        );
-
+pub fn live_patch_script_filter() -> BoxedFilter<(WithHeader<&'static [u8]>,)> {
     warp::get()
         .or(warp::head())
         .unify()
         .and(warp::path::full().and_then(move |full_path: FullPath| {
-            let maybe_content_n_type =
-                path2content_n_types.get(full_path.as_str().trim_start_matches('/'));
-            let result = match maybe_content_n_type {
-                Some((content, content_type)) => {
-                    Ok(with_header(*content, CONTENT_TYPE, *content_type))
-                }
-                None => Err(warp::reject::not_found()),
-            };
-            async { result }
-        }))
-        .boxed()
-}
-
-/// Mirror `HtmlHandlebars::copy_additional_css_and_js` but
-/// serve them directly instead of copying.
-pub fn additional_js_css_filter(
-    book_root: PathBuf,
-    additional_js: &[PathBuf],
-    additional_css: &[PathBuf],
-) -> BoxedFilter<(warp::fs::File,)> {
-    let additional_paths = additional_js
-        .iter()
-        .chain(additional_css)
-        .map(|path| path.display().to_string())
-        .collect::<HashSet<_>>();
-    debug!(?additional_paths);
-    warp::path::full()
-        .and_then(move |full_path: FullPath| {
-            let is_additional_path =
-                additional_paths.contains(full_path.as_str().trim_start_matches('/'));
-            trace!(?full_path, ?is_additional_path, "Checking additional paths");
+            let is_live_patch = full_path.as_str().trim_start_matches('/') == LIVE_PATCH_PATH;
             async move {
-                match is_additional_path {
-                    true => Ok(()),
+                match is_live_patch {
+                    true => Ok(with_header(LIVE_PATCH_JS, "Content-Type", JS_CONTENT_TYPE)),
                     false => Err(warp::reject::not_found()),
                 }
             }
-        })
-        .untuple_one()
-        .and(warp::fs::dir(book_root))
+        }))
         .boxed()
 }

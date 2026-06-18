@@ -11,9 +11,12 @@ anyhow.workspace = true
 clap = { workspace = true, optional = true }
 drop_this.workspace = true
 futures-util.workspace = true
-handlebars.workspace = true
 ignore.workspace = true
-mdbook.workspace = true
+mdbook-core.workspace = true
+mdbook-driver.workspace = true
+mdbook-html.workspace = true
+mdbook-preprocessor.workspace = true
+mdbook-renderer.workspace = true
 notify.workspace = true
 notify-debouncer-mini.workspace = true
 once_cell.workspace = true

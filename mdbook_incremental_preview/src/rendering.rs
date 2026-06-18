@@ -3,7 +3,6 @@ use super::*;
 #[derive(Default)]
 pub struct HtmlHbsState {
     pub path2ctxs: HashMap<Arc<Path>, CtxCore>,
-    pub process_cfg: ProcessCfg,
     /// Relative path of the source file of the index chapter.
     pub index_path: Option<PathBuf>,
 }
@@ -12,48 +11,14 @@ pub struct HtmlHbsState {
 pub struct CtxCore {
     pub chapter_name: Arc<str>,
     pub len_content: usize,
+    pub html_path: PathBuf,
 }
-
-#[derive(Clone, Debug, Default)]
-pub struct ProcessCfg {
-    pub smart_punctuation: bool,
-    pub playground_config: Playground,
-    pub code_config: Code,
-    pub edition: Option<RustEdition>,
-}
-
-impl ProcessCfg {
-    pub fn render_markdown(&self, markdown: &str) -> String {
-        utils::render_markdown(markdown, self.smart_punctuation)
-    }
-
-    pub fn post_process(&self, rendered: String) -> String {
-        RENDERER.post_process(
-            rendered,
-            &self.playground_config,
-            &self.code_config,
-            self.edition,
-        )
-    }
-}
-
-pub const RENDERER: HtmlHandlebars = HtmlHandlebars {};
 
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/renderer/html_handlebars/hbs_renderer.rs>.
 
-pub fn html_config_n_theme_dir_n_theme_n_handlebars(
-    ctx: &RenderContext,
-) -> Result<(HtmlConfig, PathBuf, Theme, Handlebars<'static>)> {
-    let html_config = {
-        let mut h = ctx.config.html_config().unwrap_or_default();
-        // NOTE: Inject the JavaScript for live patching.
-        h.additional_js.push(LIVE_PATCH_PATH.into());
-        // NOTE: We do not support search to reduce complexity.
-        h.search = None;
-        h
-    };
-
+pub fn html_config_n_theme_dir(ctx: &RenderContext) -> Result<(HtmlConfig, PathBuf)> {
+    let html_config = ctx.config.html_config().unwrap_or_default();
     let theme_dir = match html_config.theme {
         Some(ref theme) => {
             let dir = ctx.root.join(theme);
@@ -64,117 +29,19 @@ pub fn html_config_n_theme_dir_n_theme_n_handlebars(
         }
         None => ctx.root.join("theme"),
     };
-    let theme = Theme::new(theme_dir.clone());
-
-    let mut handlebars = Handlebars::new();
-
-    debug!("Register the index handlebars template");
-    handlebars.register_template_string("index", String::from_utf8(theme.index.clone())?)?;
-
-    debug!("Register the head handlebars template");
-    handlebars.register_partial("head", String::from_utf8(theme.head.clone())?)?;
-
-    debug!("Register the redirect handlebars template");
-    handlebars.register_template_string("redirect", String::from_utf8(theme.redirect.clone())?)?;
-
-    debug!("Register the header handlebars template");
-    handlebars.register_partial("header", String::from_utf8(theme.header.clone())?)?;
-
-    debug!("Register the toc handlebars template");
-    handlebars.register_template_string("toc_js", String::from_utf8(theme.toc_js.clone())?)?;
-    handlebars.register_template_string("toc_html", String::from_utf8(theme.toc_html.clone())?)?;
-
-    debug!("Register handlebars helpers");
-    RENDERER.register_hbs_helpers(&mut handlebars, &html_config);
-
-    Ok((html_config, theme_dir, theme, handlebars))
+    Ok((html_config, theme_dir))
 }
 
 impl HtmlHbsState {
     /// Render the book to HTML using the Handlebars renderer and
     /// save intermediate state.
-    pub async fn full_render(
-        &mut self,
-        ctx: RenderContext,
-        html_config: HtmlConfig,
-        theme: &Theme,
-        handlebars: &mut Handlebars<'_>,
-    ) -> Result<()> {
+    pub async fn full_render(&mut self, ctx: RenderContext) -> Result<()> {
         info!("Running the html backend for a full render.");
-        let book_config = &ctx.config.book;
-        let src_dir = ctx.root.join(&ctx.config.book.src);
-        let destination = &ctx.destination;
+        let src_dir = ctx.source_dir();
+        let destination = ctx.destination.clone();
         let book = &ctx.book;
-        yield_now().await;
-
-        if destination.exists() {
-            utils::fs::remove_dir_content(destination)
-                .with_context(|| "Unable to remove stale HTML output")?;
-            yield_now().await;
-        }
-
-        trace!("render");
-        let mut data = make_data(&ctx.root, book, &ctx.config, &html_config, theme)?;
-        yield_now().await;
-
-        // Print version
-        let mut print_content = String::new();
-
-        fs::create_dir_all(destination)
-            .await
-            .with_context(|| "Unexpected error when constructing destination path")?;
-
-        debug!("Render toc js");
-        {
-            let rendered_toc = handlebars.render("toc_js", &data)?;
-            utils::fs::write_file(destination, "toc.js", rendered_toc.as_bytes())?;
-            debug!("Creating toc.js ✓");
-        }
-
-        // NOTE: We do not support `hash_files` because it makes no sense for
-        // the preview server, thus the "resource" helper is a dummy adapted from
-        // <https://github.com/rust-lang/mdBook/blob/23abd20589f046c5d87ee1a81c6a77b3603ffd79/src/renderer/html_handlebars/helpers/resources.rs>.
-        fn dummy_resource_helper(
-            h: &handlebars::Helper<'_>,
-            _: &Handlebars<'_>,
-            ctx: &handlebars::Context,
-            rc: &mut handlebars::RenderContext<'_, '_>,
-            out: &mut dyn handlebars::Output,
-        ) -> handlebars::HelperResult {
-            let param = h.param(0).and_then(|v| v.value().as_str()).ok_or_else(|| {
-                handlebars::RenderErrorReason::Other(
-                    "Param 0 with String type is required for theme_option helper.".to_owned(),
-                )
-            })?;
-
-            let base_path = rc
-                .evaluate(ctx, "@root/path")?
-                .as_json()
-                .as_str()
-                .ok_or_else(|| {
-                    handlebars::RenderErrorReason::Other(
-                        "Type error for `path`, string expected".to_owned(),
-                    )
-                })?
-                .replace("\"", "");
-
-            let path_to_root = utils::fs::path_to_root(&base_path);
-
-            out.write(&path_to_root)?;
-            out.write(param).map_err(Into::into)
-        }
-        handlebars.register_helper("resource", Box::new(dummy_resource_helper));
-
-        debug!("Render toc html");
-        {
-            data.insert("is_toc_html".to_owned(), json!(true));
-            data.insert("path".to_owned(), json!("toc.html"));
-            let rendered_toc = handlebars.render("toc_html", &data)?;
-            utils::fs::write_file(destination, "toc.html", rendered_toc.as_bytes())?;
-            debug!("Creating toc.html ✓");
-            data.remove("path");
-            data.remove("is_toc_html");
-        }
+        block_n_yield(|| HtmlHandlebars::new().render(&ctx)).await?;
+        block_n_yield(|| inject_live_patch_script(&destination)).await?;
 
         let mut is_index = true;
         self.path2ctxs.clear();
@@ -183,11 +50,12 @@ impl HtmlHbsState {
                 if let BookItem::Chapter(Chapter {
                     name,
                     content,
+                    path: Some(path),
                     source_path: Some(source_path),
                     ..
                 }) = item
                 {
-                    Some((item, name, content, source_path))
+                    Some((name, content, path, source_path))
                 } else {
                     None
                 }
@@ -195,83 +63,21 @@ impl HtmlHbsState {
         };
         self.path2ctxs.reserve(items().count());
 
-        for (item, name, content, source_path) in items() {
-            // NOTE: We know that `HtmlHandlebars::render_item` only
-            // renders non-draft chapters,
-            // so we skip all other book items.
+        for (name, content, path, source_path) in items() {
             let source_path = src_dir.join(source_path);
+            let html_path = path.with_extension("html");
             if is_index {
-                self.index_path = Some(source_path.strip_prefix(&src_dir)?.to_owned());
+                self.index_path = Some(html_path.clone());
             }
-            let ctx = RenderItemContext {
-                handlebars,
-                destination: destination.to_path_buf(),
-                data: data.clone(),
-                is_index,
-                book_config: book_config.clone(),
-                html_config: html_config.clone(),
-                edition: ctx.config.rust.edition,
-                chapter_titles: &ctx.chapter_titles,
-            };
             // Only the first non-draft chapter item should be treated as the "index"
             is_index = false;
-            block_n_yield(|| RENDERER.render_item(item, ctx, &mut print_content)).await?;
             let ctx = CtxCore {
                 chapter_name: name.clone().into(),
                 len_content: content.len(),
+                html_path,
             };
             self.path2ctxs.insert(source_path.into(), ctx);
         }
-
-        // Render 404 page
-        if html_config.input_404 != Some("".to_string()) {
-            block_n_yield(|| {
-                RENDERER.render_404(&ctx, &html_config, &src_dir, handlebars, &mut data)
-            })
-            .await?;
-        }
-
-        // Print version
-        block_n_yield(|| RENDERER.configure_print_version(&mut data, &print_content)).await;
-        if let Some(ref title) = ctx.config.book.title {
-            data.insert("title".to_owned(), json!(title));
-        }
-
-        // Render the handlebars template with the data
-        if html_config.print.enable {
-            debug!("Render template");
-            let rendered = handlebars.render("index", &data)?;
-            yield_now().await;
-
-            let rendered = block_n_yield(|| {
-                RENDERER.post_process(
-                    rendered,
-                    &html_config.playground,
-                    &html_config.code,
-                    ctx.config.rust.edition,
-                )
-            })
-            .await;
-
-            block_n_yield(|| utils::fs::write_file(destination, "print.html", rendered.as_bytes()))
-                .await?;
-            debug!("Created print.html ✓");
-        }
-
-        debug!("Emitting redirects");
-        block_n_yield(|| {
-            RENDERER.emit_redirects(&ctx.destination, handlebars, &html_config.redirect)
-        })
-        .await
-        .context("Unable to emit redirects")?;
-
-        // Save post-process configuration.
-        self.process_cfg = ProcessCfg {
-            smart_punctuation: html_config.smart_punctuation(),
-            playground_config: html_config.playground,
-            code_config: html_config.code,
-            edition: ctx.config.rust.edition,
-        };
 
         Ok(())
     }
@@ -313,6 +119,7 @@ pub async fn patch_chapter(
     CtxCore {
         chapter_name,
         len_content,
+        html_path,
     }: CtxCore,
     book: Arc<MDBookCore>,
     src_dir: Arc<Path>,
@@ -322,6 +129,7 @@ pub async fn patch_chapter(
         &path,
         &chapter_name,
         len_content,
+        &html_path,
         &src_dir,
         &book,
         &patch_registry_ref,
@@ -340,6 +148,7 @@ pub async fn try_patch_chapter(
     path: &Path,
     chapter_name: &str,
     len_content: usize,
+    html_path: &Path,
     src_dir: &Path,
     book: &MDBookCore,
     patch_registry_ref: &ActorRef<PatchRegistry>,
@@ -349,6 +158,7 @@ pub async fn try_patch_chapter(
         path,
         src_dir,
         chapter_name,
+        html_path,
         content,
         book,
         patch_registry_ref,
@@ -360,6 +170,7 @@ pub async fn try_patch_chapter_w_content(
     path: &Path,
     src_dir: &Path,
     chapter_name: &str,
+    html_path: &Path,
     content: String,
     book: &MDBookCore,
     patch_registry_ref: &ActorRef<PatchRegistry>,
@@ -373,28 +184,110 @@ pub async fn try_patch_chapter_w_content(
     );
     yield_now().await;
     let chapter = Chapter::new(chapter_name, content, relative_path, vec![]);
-    let mut patcher_book = Book::new();
-    patcher_book.sections = vec![BookItem::Chapter(chapter)];
-    let (mut preprocessed_book, _) = book.preprocess_book(patcher_book).await?;
-    let markdown = match preprocessed_book.sections.pop() {
-        None => bail!("{chapter_name} at {relative_path:?} preprocessed to an empty book."),
-        Some(BookItem::Chapter(Chapter {
-            content,
-            source_path: Some(source_path),
-            ..
-        })) if source_path == relative_path => content,
-        _ => bail!(
-            "{chapter_name} at {relative_path:?} preprocessed to unexpected {preprocessed_book:?}"
-        ),
-    };
+    let patcher_book = Book::new_with_items(vec![BookItem::Chapter(chapter)]);
+    let (preprocessed_book, preprocess_ctx) = book.preprocess_book(patcher_book).await?;
+    let patch_html = render_patch_html(
+        book,
+        preprocessed_book,
+        preprocess_ctx,
+        relative_path,
+        html_path,
+    )
+    .await?;
     patch_registry_ref
         .cast(PatchRegistryRequest::NewPatch(
-            relative_path.with_extension("html"),
-            markdown,
+            html_path.to_path_buf(),
+            patch_html,
         ))
         .await
         .context("Updating the patch registry")?;
     Ok(())
+}
+
+async fn render_patch_html(
+    book: &MDBookCore,
+    preprocessed_book: Book,
+    preprocess_ctx: PreprocessorContext,
+    relative_path: &Path,
+    html_path: &Path,
+) -> Result<String> {
+    validate_patch_path(&preprocessed_book, relative_path, html_path)?;
+    let temp_dir = tempdir().context("Creating temporary patch render directory")?;
+    let mut render_context = RenderContext::new(
+        book.root().to_path_buf(),
+        preprocessed_book,
+        book.config().clone(),
+        temp_dir.path(),
+    );
+    render_context
+        .chapter_titles
+        .extend(preprocess_ctx.chapter_titles.borrow_mut().drain());
+    block_n_yield(|| HtmlHandlebars::new().render(&render_context)).await?;
+    let html_path = temp_dir.path().join(html_path);
+    let html = fs::read_to_string(&html_path)
+        .await
+        .with_context(|| format!("Reading rendered patch {}", html_path.display()))?;
+    extract_main_inner_html(&html).map(str::to_owned)
+}
+
+fn validate_patch_path(book: &Book, relative_path: &Path, html_path: &Path) -> Result<()> {
+    match book.iter().next() {
+        Some(BookItem::Chapter(Chapter {
+            path: Some(path),
+            source_path: Some(source_path),
+            ..
+        })) if source_path == relative_path && path.with_extension("html") == html_path => Ok(()),
+        other => {
+            bail!("Chapter at {relative_path:?} preprocessed to unexpected patch output {other:?}")
+        }
+    }
+}
+
+fn extract_main_inner_html(html: &str) -> Result<&str> {
+    let start = html
+        .find("<main")
+        .and_then(|pos| html[pos..].find('>').map(|end| pos + end + 1))
+        .context("Rendered patch did not contain `<main>`")?;
+    let end = html[start..]
+        .find("</main>")
+        .map(|pos| start + pos)
+        .context("Rendered patch did not contain `</main>`")?;
+    Ok(html[start..end].trim())
+}
+
+fn inject_live_patch_script(destination: &Path) -> Result<()> {
+    let script = format!(r#"<script src="/{LIVE_PATCH_PATH}"></script>"#);
+    inject_live_patch_script_in_dir(destination, &script)
+}
+
+fn inject_live_patch_script_in_dir(dir: &Path, script: &str) -> Result<()> {
+    for entry in std::fs::read_dir(dir).with_context(|| format!("Reading {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            inject_live_patch_script_in_dir(&path, script)?;
+        } else if path.extension() == Some(OsStr::new("html")) {
+            inject_live_patch_script_in_file(&path, script)?;
+        }
+    }
+    Ok(())
+}
+
+fn inject_live_patch_script_in_file(path: &Path, script: &str) -> Result<()> {
+    let html = std::fs::read_to_string(path)
+        .with_context(|| format!("Reading rendered HTML {}", path.display()))?;
+    if html.contains(script) {
+        return Ok(());
+    }
+    let Some(body_end) = html.rfind("</body>") else {
+        return Ok(());
+    };
+    let mut patched = String::with_capacity(html.len() + script.len());
+    patched.push_str(&html[..body_end]);
+    patched.push_str(script);
+    patched.push_str(&html[body_end..]);
+    std::fs::write(path, patched).with_context(|| format!("Writing {}", path.display()))
 }
 
 async fn load_content_of_chapter(path: &Path, capacity: usize) -> io::Result<String> {
@@ -413,6 +306,7 @@ async fn load_content_of_chapter(path: &Path, capacity: usize) -> io::Result<Str
 
 /// A loaded [`MDBook`] that can preprocess temporary patch books.
 pub struct MDBookCore {
+    root: PathBuf,
     config: Config,
     source_dir: PathBuf,
     book: Mutex<MDBook>,
@@ -421,6 +315,10 @@ pub struct MDBookCore {
 impl MDBookCore {
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     pub fn source_dir(&self) -> &Path {
@@ -456,7 +354,7 @@ impl<'a> BookRestoreGuard<'a> {
     }
 
     fn preprocess(mut self) -> Result<(Book, PreprocessorContext)> {
-        let result = self.mdbook.preprocess_book(&RENDERER);
+        let result = self.mdbook.preprocess_book(&HtmlHandlebars::new());
         self.restore();
         result
     }
@@ -478,10 +376,33 @@ impl From<MDBook> for MDBookCore {
     fn from(value: MDBook) -> Self {
         let source_dir = value.root.join(&value.config.book.src);
         let config = value.config.clone();
+        let root = value.root.clone();
         Self {
+            root,
             config,
             source_dir,
             book: Mutex::new(value),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_main_with_attributes() {
+        let html = r#"<html><body><main id="content"><h1>x</h1></main></body></html>"#;
+        assert_eq!(extract_main_inner_html(html).unwrap(), "<h1>x</h1>");
+    }
+
+    #[test]
+    fn validates_readme_patch_output_as_index() {
+        let mut chapter = Chapter::new("intro", String::new(), "README.md", vec![]);
+        chapter.path = Some("index.md".into());
+        let book = Book::new_with_items(vec![BookItem::Chapter(chapter)]);
+
+        validate_patch_path(&book, Path::new("README.md"), Path::new("index.html")).unwrap();
+        validate_patch_path(&book, Path::new("README.md"), Path::new("README.html")).unwrap_err();
     }
 }

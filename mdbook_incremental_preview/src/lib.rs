@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     ffi::OsStr,
-    io, iter, mem,
+    io, mem,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
@@ -12,23 +12,18 @@ use std::{
 use anyhow::{bail, Context};
 use drop_this::*;
 use futures_util::sink::SinkExt;
-use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
-use mdbook::{
-    book::{Book, Chapter},
-    config::{Code, HtmlConfig, Playground, RustEdition},
+use mdbook_core::{
+    book::{Book, BookItem, Chapter},
+    config::{Config, HtmlConfig},
     errors::*,
-    preprocess::PreprocessorContext,
-    renderer::{
-        html_handlebars::hbs_renderer::{make_data, RenderItemContext},
-        HtmlHandlebars, RenderContext,
-    },
-    theme::{self, playground_editor, Theme},
-    utils, BookItem, Config, MDBook,
 };
+use mdbook_driver::MDBook;
+use mdbook_html::HtmlHandlebars;
+use mdbook_preprocessor::PreprocessorContext;
+use mdbook_renderer::{RenderContext, Renderer};
 use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};
-use serde_json::json;
 use tempfile::{tempdir, TempDir};
 use tokio::{
     fs::{self, File},

@@ -50,7 +50,6 @@ impl Actor for Rebuilder {
                 self.patch_registry_ref
                     .cast(PatchRegistryRequest::Rebuild {
                         index_path: hbs_state.index_path.clone(),
-                        process_cfg: hbs_state.process_cfg.clone(),
                     })
                     .await
                     .context("Clearing the patch registry")?;
@@ -112,6 +111,7 @@ impl Actor for Rebuilder {
                         arc_path.clone(),
                         self.src_dir.clone(),
                         ctx.chapter_name.clone(),
+                        ctx.html_path.clone(),
                         content,
                         book.clone(),
                         self.patch_registry_ref.clone(),
@@ -160,9 +160,7 @@ impl Rebuilder {
             None => true,
         };
         let file_404_changed = match &old_config {
-            Some(old_config) => {
-                old_config.get("output.html.input-404") != config.get("output.html.input-404")
-            }
+            Some(old_config) => input_404(old_config) != input_404(config),
             None => true,
         };
         let additional_js_changed = m.html_config.additional_js != html_config.additional_js;
@@ -214,11 +212,8 @@ impl Rebuilder {
         }
 
         if src_dir_changed || additional_js_changed || additional_css_changed || file_404_changed {
-            let input_404 = config
-                .get("output.html.input-404")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("404.html");
-            let relative_404_path = Path::new(input_404).with_extension("html");
+            let input_404 = html_config.get_404_output_file();
+            let relative_404_path = Path::new(&input_404).with_extension("html");
             let file_404 = self.build_dir.join(relative_404_path);
             info!(
                 ?src_dir,
@@ -230,9 +225,6 @@ impl Rebuilder {
             self.info_tx
                 .send(ServeInfo {
                     src_dir: src_dir.clone(),
-                    theme_dir: theme_dir.into(),
-                    additional_js: html_config.additional_js.clone(),
-                    additional_css: html_config.additional_css.clone(),
                     file_404: file_404.clone(),
                 })
                 .await
@@ -294,10 +286,15 @@ impl Rebuilder {
     }
 }
 
+fn input_404(config: &Config) -> Option<String> {
+    config.html_config().and_then(|config| config.input_404)
+}
+
 pub async fn patch_chapter_w_content(
     path: Arc<Path>,
     src_dir: Arc<Path>,
     chapter_name: Arc<str>,
+    html_path: PathBuf,
     content: String,
     book: Arc<MDBookCore>,
     patch_registry_ref: ActorRef<PatchRegistry>,
@@ -306,6 +303,7 @@ pub async fn patch_chapter_w_content(
         &path,
         &src_dir,
         &chapter_name,
+        &html_path,
         content,
         &book,
         &patch_registry_ref,
@@ -353,11 +351,9 @@ async fn try_load_book(
     let mut book = block_n_yield(|| MDBook::load(book_root)).await?;
     config_book_for_live_reload(&mut book).context("configuring the book for live reload")?;
     let render_context = block_n_yield(|| make_render_context(&book, build_dir)).await?;
-    let (html_config, theme_dir, theme, mut handlebars) =
-        block_n_yield(|| html_config_n_theme_dir_n_theme_n_handlebars(&render_context)).await?;
-    hbs_state
-        .full_render(render_context, html_config.clone(), &theme, &mut handlebars)
-        .await?;
+    let (html_config, theme_dir) =
+        block_n_yield(|| html_config_n_theme_dir(&render_context)).await?;
+    hbs_state.full_render(render_context).await?;
     info!(
         ?theme_dir,
         len_rendering_path2ctxs = hbs_state.path2ctxs.len(),

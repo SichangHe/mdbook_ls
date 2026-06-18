@@ -11,7 +11,7 @@ pub fn config_book_for_live_reload(book: &mut MDBook) -> Result<()> {
 
 pub fn make_render_context(book: &MDBook, build_dir: &Path) -> Result<RenderContext> {
     // We only run the HTML renderer.
-    let (preprocessed_book, preprocess_ctx) = book.preprocess_book(&RENDERER)?;
+    let (preprocessed_book, preprocess_ctx) = book.preprocess_book(&HtmlHandlebars::new())?;
 
     let mut render_context = RenderContext::new(
         book.root.clone(),
@@ -22,5 +22,8 @@ pub fn make_render_context(book: &MDBook, build_dir: &Path) -> Result<RenderCont
     render_context
         .chapter_titles
         .extend(preprocess_ctx.chapter_titles.borrow_mut().drain());
+    let mut html_config = render_context.config.html_config().unwrap_or_default();
+    html_config.search = None;
+    render_context.config.set("output.html", html_config)?;
     Ok(render_context)
 }

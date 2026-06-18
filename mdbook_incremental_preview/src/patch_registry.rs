@@ -5,12 +5,10 @@ use super::*;
 /// A registry of watch channel senders of patches for paths.
 #[derive(Default)]
 pub struct PatchRegistry {
-    /// Preprocessed markdown content and watch channel for
-    /// HTML `<main>` body content of each patched path.
+    /// HTML `<main>` body content and watch channel for each patched path.
     patches: HashMap<PathBuf, (String, watch::Sender<String>)>,
-    /// Relative HTTP path of the index chapter.
+    /// Relative rendered HTML path of the index chapter.
     index_path: Option<PathBuf>,
-    process_cfg: ProcessCfg,
 }
 
 impl Actor for PatchRegistry {
@@ -20,41 +18,33 @@ impl Actor for PatchRegistry {
 
     async fn handle_cast(&mut self, msg: Self::Cast, _env: &mut ActorEnv<Self>) -> Result<()> {
         match msg {
-            PatchRegistryRequest::NewPatch(path, new_markdown) => {
+            PatchRegistryRequest::NewPatch(path, new_html) => {
                 debug!(?path, "Registry received patch.");
                 match self.patches.entry(path) {
                     // Entry exists,
                     // update the patch in-place and send watch updates.
                     Entry::Occupied(mut entry) => {
-                        let (markdown, sender) = entry.get_mut();
+                        let (html, sender) = entry.get_mut();
                         // Update the patch only if it changed.
-                        if *markdown != new_markdown {
+                        if *html != new_html {
                             debug!("Updating patch in registry.");
-                            let rendered =
-                                block_n_yield(|| self.process_cfg.render_markdown(&new_markdown))
-                                    .await;
-                            let new_html =
-                                block_n_yield(|| self.process_cfg.post_process(rendered)).await;
+                            *html = new_html.clone();
                             sender.send_modify(|html| *html = new_html);
                         }
                     }
                     // New entry, register the patch and a new watch channel.
                     Entry::Vacant(entry) => {
-                        _ = entry.insert((Default::default(), watch::channel(new_markdown).0))
+                        _ = entry.insert((new_html.clone(), watch::channel(new_html).0))
                     }
                 };
             }
-            PatchRegistryRequest::Rebuild {
-                index_path,
-                process_cfg,
-            } => {
+            PatchRegistryRequest::Rebuild { index_path } => {
                 for (_, (_, watcher)) in self.patches.drain() {
                     watcher.send_modify(|v| *v = "__RELOAD".into())
                 }
-                self.process_cfg = process_cfg;
                 if let Some(index_path) = index_path {
-                    self.index_path = Some(index_path.with_extension("html"));
-                    debug!(?self.index_path, ?self.process_cfg, "Updated index path in patch registry.")
+                    self.index_path = Some(index_path);
+                    debug!(?self.index_path, "Updated index path in patch registry.")
                 }
             }
             PatchRegistryRequest::Clear => self.patches.clear(),
@@ -99,13 +89,10 @@ impl Actor for PatchRegistry {
 /// A request to modify the patch registry.
 #[derive(Debug)]
 pub enum PatchRegistryRequest {
-    /// Register a new patch with the preprocessed Markdown content.
+    /// Register a new patch with rendered HTML content.
     NewPatch(PathBuf, String),
     /// The book is rebuilt, with an optional new index path.
-    Rebuild {
-        index_path: Option<PathBuf>,
-        process_cfg: ProcessCfg,
-    },
+    Rebuild { index_path: Option<PathBuf> },
     /// Clear the registry, like a soft shutdown.
     Clear,
 }
