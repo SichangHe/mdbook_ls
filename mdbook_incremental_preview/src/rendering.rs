@@ -411,52 +411,77 @@ async fn load_content_of_chapter(path: &Path, capacity: usize) -> io::Result<Str
     Ok(content)
 }
 
-/// Core fields of [MDBook] for separate rendering.
-// NOTE: This is adapted from `MDBook`.
-#[derive(Default)]
+/// A loaded [`MDBook`] that can preprocess temporary patch books.
 pub struct MDBookCore {
-    /// The book's root directory.
-    pub root: PathBuf,
-    /// The configuration used to tweak now a book is built.
-    pub config: Config,
-    /// List of renderers to render the book.
-    pub renderers: Vec<Box<dyn Renderer + Send + Sync + 'static>>,
-    /// List of pre-processors to be run on the book.
-    pub preprocessors: Vec<Box<dyn Preprocessor + Send + Sync + 'static>>,
+    config: Config,
+    source_dir: PathBuf,
+    book: Mutex<MDBook>,
 }
 
 impl MDBookCore {
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    pub fn source_dir(&self) -> &Path {
+        &self.source_dir
+    }
+
     /// Run preprocessors on `book` and return the final book.
     pub async fn preprocess_book(&self, book: Book) -> Result<(Book, PreprocessorContext)> {
-        let preprocess_ctx = PreprocessorContext {
-            root: self.root.clone(),
-            config: self.config.clone(),
-            renderer: RENDERER.name().to_string(),
-            mdbook_version: MDBOOK_VERSION.to_string(),
-            chapter_titles: RefCell::new(HashMap::new()),
-            __non_exhaustive: (),
-        };
-        // NOTE: This `Mutex` is needed because `PreprocessorContext: !Send`.
-        let preprocess_ctx = Mutex::new(preprocess_ctx);
-        let mut preprocessed_book = book;
-        for preprocessor in &self.preprocessors {
-            let should_run = || preprocessor_should_run(&**preprocessor, &RENDERER, &self.config);
-            if block_n_yield(should_run).await {
-                debug!(preprocessor = preprocessor.name(), "Running.",);
-                let run = || preprocessor.run(&preprocess_ctx.lock().unwrap(), preprocessed_book);
-                preprocessed_book = block_n_yield(run).await?;
-            }
-        }
-        Ok((preprocessed_book, preprocess_ctx.into_inner().unwrap()))
+        block_n_yield(|| {
+            let mut mdbook = self
+                .book
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = BookRestoreGuard::new(&mut mdbook, book);
+            guard.preprocess()
+        })
+        .await
     }
 }
+
+struct BookRestoreGuard<'a> {
+    mdbook: &'a mut MDBook,
+    original_book: Option<Book>,
+}
+
+impl<'a> BookRestoreGuard<'a> {
+    fn new(mdbook: &'a mut MDBook, book: Book) -> Self {
+        let original_book = mem::replace(&mut mdbook.book, book);
+        Self {
+            mdbook,
+            original_book: Some(original_book),
+        }
+    }
+
+    fn preprocess(mut self) -> Result<(Book, PreprocessorContext)> {
+        let result = self.mdbook.preprocess_book(&RENDERER);
+        self.restore();
+        result
+    }
+
+    fn restore(&mut self) {
+        if let Some(original_book) = self.original_book.take() {
+            self.mdbook.book = original_book;
+        }
+    }
+}
+
+impl Drop for BookRestoreGuard<'_> {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
 impl From<MDBook> for MDBookCore {
     fn from(value: MDBook) -> Self {
+        let source_dir = value.root.join(&value.config.book.src);
+        let config = value.config.clone();
         Self {
-            root: value.root,
-            config: value.config,
-            renderers: value.renderers,
-            preprocessors: value.preprocessors,
+            config,
+            source_dir,
+            book: Mutex::new(value),
         }
     }
 }

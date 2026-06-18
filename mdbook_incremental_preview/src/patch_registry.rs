@@ -86,7 +86,7 @@ impl Actor for PatchRegistry {
             }
             PatchRegistryQuery::GetHasPatch(path) => {
                 let path = self.resolve_index_path(path);
-                let has_patch = self.patches.contains_key(path.as_path());
+                let has_patch = self.patches.contains_key(path.as_ref());
                 response_sender
                     .send(PatchRegistryResponse::HasPatch(has_patch))
                     .drop_result();
@@ -130,7 +130,7 @@ pub enum PatchRegistryResponse {
 
 impl PatchRegistry {
     /// Convert HTTP `path` to the index path if it is the path to root.
-    fn resolve_index_path(&self, path: PathBuf) -> Cow<'_, PathBuf> {
+    fn resolve_index_path(&self, path: PathBuf) -> Cow<'_, Path> {
         match &self.index_path {
             Some(index_path) if path == PathBuf::new() => Cow::Borrowed(index_path),
             _ => Cow::Owned(path),

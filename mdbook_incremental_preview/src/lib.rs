@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    cell::RefCell,
     collections::{HashMap, HashSet},
     ffi::OsStr,
     io, iter, mem,
@@ -16,16 +15,16 @@ use futures_util::sink::SinkExt;
 use handlebars::Handlebars;
 use ignore::gitignore::Gitignore;
 use mdbook::{
-    book::{preprocessor_should_run, Book, Chapter},
+    book::{Book, Chapter},
     config::{Code, HtmlConfig, Playground, RustEdition},
     errors::*,
-    preprocess::{Preprocessor, PreprocessorContext},
+    preprocess::PreprocessorContext,
     renderer::{
         html_handlebars::hbs_renderer::{make_data, RenderItemContext},
         HtmlHandlebars, RenderContext,
     },
     theme::{self, playground_editor, Theme},
-    utils, BookItem, Config, MDBook, Renderer, MDBOOK_VERSION,
+    utils, BookItem, Config, MDBook,
 };
 use notify::{RecommendedWatcher, RecursiveMode::*};
 use notify_debouncer_mini::{DebounceEventHandler, DebouncedEvent, Debouncer};

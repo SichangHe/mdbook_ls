@@ -58,9 +58,10 @@ impl Actor for Rebuilder {
                     self.handle_reload(&book, &html_config, &theme_dir, &env.ref_)
                         .await?;
                 }
+                let book = Arc::new(book);
                 let m = &mut self.mutables;
                 (m.book, m.html_config, m.theme_dir, m.hbs_state) =
-                    (book.into(), html_config, theme_dir, hbs_state);
+                    (Some(book), html_config, theme_dir, hbs_state);
                 // Re-patch the chapters patched after a rebuild.
                 let paths = running_patch_join_sets(&mut m.patch_join_sets);
                 let (env, msg) = (env.ref_.clone(), RebuildInfo::ChangedPaths(paths));
@@ -90,25 +91,29 @@ impl Actor for Rebuilder {
                     _ => None,
                 };
                 debug!(full_rebuild);
-
                 match full_rebuild {
                     Some(reload) => self.send_rebuild_info(env.ref_.clone(), reload),
                     None => {
-                        let (b, ref_, sets) =
-                            (&m.book, &self.patch_registry_ref, &mut m.patch_join_sets);
-                        m.hbs_state.patch(b, &self.src_dir, paths, ref_, sets).await;
+                        if let Some(book) = &m.book {
+                            let (ref_, sets) = (&self.patch_registry_ref, &mut m.patch_join_sets);
+                            m.hbs_state
+                                .patch(book, &self.src_dir, paths, ref_, sets)
+                                .await;
+                        }
                     }
                 }
             }
             RebuildInfo::ModifiedContent { path, content } => {
                 let m = &mut self.mutables;
-                if let Some((arc_path, ctx)) = m.hbs_state.path2ctxs.get_key_value(path.as_path()) {
+                if let (Some(book), Some((arc_path, ctx))) =
+                    (&m.book, m.hbs_state.path2ctxs.get_key_value(path.as_path()))
+                {
                     let task = patch_chapter_w_content(
                         arc_path.clone(),
                         self.src_dir.clone(),
                         ctx.chapter_name.clone(),
                         content,
-                        m.book.clone(),
+                        book.clone(),
                         self.patch_registry_ref.clone(),
                     );
                     _ = m.patch_join_sets.entry(path).or_default().spawn(task);
@@ -145,14 +150,21 @@ impl Rebuilder {
         env: &ActorRef<Self>,
     ) -> Result<()> {
         let m = &mut self.mutables;
-        let src_dir = book.root.join(&book.config.book.src);
+        let config = book.config();
+        let src_dir = book.source_dir().to_path_buf();
         let src_dir_changed = src_dir != *self.src_dir;
         let theme_dir_changed = m.theme_dir != *theme_dir;
-        let extra_watch_dirs_changed =
-            m.book.config.build.extra_watch_dirs != book.config.build.extra_watch_dirs;
-
-        let file_404_changed =
-            m.book.config.get("output.html.input-404") != book.config.get("output.html.input-404");
+        let old_config = m.book.as_ref().map(|book| book.config());
+        let extra_watch_dirs_changed = match &old_config {
+            Some(old_config) => old_config.build.extra_watch_dirs != config.build.extra_watch_dirs,
+            None => true,
+        };
+        let file_404_changed = match &old_config {
+            Some(old_config) => {
+                old_config.get("output.html.input-404") != config.get("output.html.input-404")
+            }
+            None => true,
+        };
         let additional_js_changed = m.html_config.additional_js != html_config.additional_js;
         let additional_css_changed = m.html_config.additional_css != html_config.additional_css;
 
@@ -171,7 +183,7 @@ impl Rebuilder {
                 ?self.book_root,
                 ?src_dir,
                 ?theme_dir,
-                ?book.config.build.extra_watch_dirs,
+                ?config.build.extra_watch_dirs,
                 "Reloading the file watcher.",
             );
             let (env, ignored_paths) = (env.clone(), m.ignored_paths.clone());
@@ -194,7 +206,7 @@ impl Rebuilder {
                     &src_dir,
                     theme_dir,
                     &self.book_toml,
-                    &book.config.build.extra_watch_dirs,
+                    &config.build.extra_watch_dirs,
                     event_handler,
                 )
             };
@@ -202,8 +214,7 @@ impl Rebuilder {
         }
 
         if src_dir_changed || additional_js_changed || additional_css_changed || file_404_changed {
-            let input_404 = book
-                .config
+            let input_404 = config
                 .get("output.html.input-404")
                 .and_then(toml::Value::as_str)
                 .unwrap_or("404.html");
@@ -354,7 +365,7 @@ async fn try_load_book(
         "rebuilt the book"
     );
     env.cast(RebuildInfo::NewBook(Box::new(BookData {
-        book: book.into(),
+        book: MDBookCore::from(book),
         reload,
         html_config,
         theme_dir,
@@ -380,7 +391,7 @@ pub type PatchJoinSets = HashMap<PathBuf, TwoJoinSet<()>>;
 pub struct RebuilderMut {
     open_browser_at: Option<PathBuf>,
     _debouncer_to_keep_watcher_alive: Option<Debouncer<RecommendedWatcher>>,
-    book: Arc<MDBookCore>,
+    book: Option<Arc<MDBookCore>>,
     maybe_gitignore: Option<(Gitignore, PathBuf)>,
     summary_md: PathBuf,
     theme_dir: PathBuf,
