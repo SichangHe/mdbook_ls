@@ -4,15 +4,7 @@ permissions:
   contents: write
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'mdbook_fork4ls/Cargo.toml'
-      - '.github/workflows/release-plz.yml'
-      - '**.rs'
-      - '**Cargo.toml'
-      - '**CHANGELOG.md'
+  workflow_dispatch:
 
 jobs:
   release-plz:
