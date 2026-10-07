@@ -12,11 +12,11 @@ clap = { version = "4", features = ["derive"] }
 drop_this = { version = "0.0", features = ["tokio"] }
 futures-util = "0.3"
 ignore = "0.4"
-mdbook-core = { package = "mdbook_core_fork4ls", path = "../mdBook/crates/mdbook-core", version = "0.5.2" }
-mdbook-driver = { package = "mdbook_driver_fork4ls", path = "../mdBook/crates/mdbook-driver", version = "0.5.2" }
-mdbook-html = { package = "mdbook_html_fork4ls", path = "../mdBook/crates/mdbook-html", version = "0.5.2", default-features = false }
-mdbook-preprocessor = { package = "mdbook_preprocessor_fork4ls", path = "../mdBook/crates/mdbook-preprocessor", version = "0.5.2" }
-mdbook-renderer = { package = "mdbook_renderer_fork4ls", path = "../mdBook/crates/mdbook-renderer", version = "0.5.2" }
+mdbook-core = { package = "mdbook_core_fork4ls", path = "../mdBook/crates/mdbook-core", version = "0.5.4" }
+mdbook-driver = { package = "mdbook_driver_fork4ls", path = "../mdBook/crates/mdbook-driver", version = "0.5.4" }
+mdbook-html = { package = "mdbook_html_fork4ls", path = "../mdBook/crates/mdbook-html", version = "0.5.4", default-features = false }
+mdbook-preprocessor = { package = "mdbook_preprocessor_fork4ls", path = "../mdBook/crates/mdbook-preprocessor", version = "0.5.4" }
+mdbook-renderer = { package = "mdbook_renderer_fork4ls", path = "../mdBook/crates/mdbook-renderer", version = "0.5.4" }
 mdbook_incremental_preview = { path = "mdbook_incremental_preview", version = "0.0" }
 notify = "8"
 notify-debouncer-mini = "0.6"
