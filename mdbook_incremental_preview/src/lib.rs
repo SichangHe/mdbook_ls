@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use drop_this::*;
-use futures_util::sink::SinkExt;
+use futures_util::{sink::SinkExt, StreamExt};
 use ignore::gitignore::Gitignore;
 use mdbook_core::{
     book::{Book, BookItem, Chapter},
@@ -29,7 +29,7 @@ use tokio::{
     fs::{self, File},
     io::AsyncReadExt,
     select, spawn,
-    sync::{mpsc, oneshot, watch},
+    sync::{broadcast, mpsc, oneshot, watch},
     task::{block_in_place, spawn_blocking, yield_now, JoinHandle},
     time::timeout,
 };
@@ -53,6 +53,7 @@ pub mod patch_registry;
 pub mod previewing;
 pub mod rebuilding;
 pub mod rendering;
+mod source_search;
 pub mod watch_files;
 pub mod web_server;
 

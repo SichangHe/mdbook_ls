@@ -22,6 +22,8 @@ notify-debouncer-mini.workspace = true
 once_cell.workspace = true
 opener.workspace = true
 pathdiff.workspace = true
+percent-encoding = "2"
+pulldown-cmark = { version = "0.13", default-features = false }
 regex.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

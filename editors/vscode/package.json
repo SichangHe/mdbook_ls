@@ -1,0 +1,36 @@
+{
+  "name": "mdbook-ls",
+  "displayName": "mdBook LS",
+  "description": "Live mdBook preview with forward and reverse source search.",
+  "version": "0.1.0",
+  "publisher": "SichangHe",
+  "license": "MIT",
+  "repository": {"type": "git", "url": "https://github.com/SichangHe/mdbook_ls"},
+  "engines": {"vscode": "^1.91.0"},
+  "categories": ["Other"],
+  "capabilities": {"untrustedWorkspaces": {"supported": false, "description": "mdBook builds may execute configured preprocessors."}},
+  "main": "dist/extension.js",
+  "activationEvents": ["onLanguage:markdown"],
+  "contributes": {
+    "commands": [
+      {"command": "mdbookLs.openPreview", "title": "mdBook: Open Preview"},
+      {"command": "mdbookLs.forwardSearch", "title": "mdBook: Reveal Cursor in Preview"},
+      {"command": "mdbookLs.stopPreview", "title": "mdBook: Stop Preview"}
+    ],
+    "configuration": {
+      "title": "mdBook LS",
+      "properties": {
+        "mdbookLs.serverPath": {"type": "string", "default": "mdbook-ls", "scope": "machine", "description": "Server executable path or command. Reload the window after changing."},
+        "mdbookLs.listenAddress": {"type": "string", "default": "127.0.0.1:33000", "scope": "machine", "description": "Preview server address."}
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.js --bundle --platform=node --format=cjs --external:vscode --minify --outfile=dist/extension.js",
+    "vscode:prepublish": "npm run build",
+    "package": "vsce package --no-dependencies --skip-license",
+    "test": "npm run package && node test/run.js"
+  },
+  "dependencies": {"vscode-languageclient": "^9.0.1"},
+  "devDependencies": {"@vscode/test-electron": "^2.5.2", "@vscode/vsce": "^3.6.0", "esbuild": "^0.25.0", "ws": "^8.18.0"}
+}

@@ -11,6 +11,21 @@ pub struct MDBookLS {
 
 impl MDBookLS {
     pub fn new(client: Client, live_patcher: Previewer) -> Self {
+        let (reverse_tx, mut reverse_rx) = mpsc::channel::<SearchLocation>(8);
+        let notification_client = client.clone();
+        tokio::spawn(async move {
+            while let Some(location) = reverse_rx.recv().await {
+                if let Ok(uri) = Url::from_file_path(location.path) {
+                    notification_client
+                        .send_notification::<ReverseSearch>(serde_json::json!({
+                            "uri": uri,
+                            "position": {"line": location.line, "character": location.character},
+                        }))
+                        .await;
+                }
+            }
+        });
+        let live_patcher = live_patcher.with_reverse_search(reverse_tx);
         let (tx, msg_receiver) = mpsc::channel(8);
         let (live_patcher_handle, live_patcher) =
             live_patcher.spawn_with_channel(tx.clone(), msg_receiver);
@@ -24,6 +39,14 @@ impl MDBookLS {
 
 const OPEN_PREVIEW: &str = "open_preview";
 const STOP_PREVIEW: &str = "stop_preview";
+const FORWARD_SEARCH: &str = "forward_search";
+
+// 🧑 "implement forward and reverse searches and integrate with nvim and vscode"
+enum ReverseSearch {}
+impl notification::Notification for ReverseSearch {
+    type Params = Value;
+    const METHOD: &'static str = "mdbook/reverseSearch";
+}
 
 #[tower_lsp::async_trait]
 impl LanguageServer for MDBookLS {
@@ -39,7 +62,9 @@ impl LanguageServer for MDBookLS {
                 }
                 folders.into_iter().next()
             })
-            .map_or_else(|| ".".into(), |folder| folder.name.into());
+            .and_then(|folder| folder.uri.to_file_path().ok())
+            .or_else(|| params.root_uri.and_then(|uri| uri.to_file_path().ok()))
+            .unwrap_or_else(|| ".".into());
         debug!(?book_root, "Initializing server.");
         self.live_patcher
             .cast(PreviewInfo::BookRoot(book_root))
@@ -66,6 +91,32 @@ impl LanguageServer for MDBookLS {
                 .cast(PreviewInfo::StopPreview)
                 .await
                 .expect("Live patcher died."),
+            FORWARD_SEARCH => {
+                let path = params
+                    .arguments
+                    .first()
+                    .and_then(Value::as_str)
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_absolute())
+                    .ok_or_else(|| {
+                        tower_lsp::jsonrpc::Error::invalid_params("expected absolute source path")
+                    })?;
+                let position: Position =
+                    serde_json::from_value(params.arguments.get(1).cloned().ok_or_else(|| {
+                        tower_lsp::jsonrpc::Error::invalid_params("expected source position")
+                    })?)
+                    .map_err(|_| {
+                        tower_lsp::jsonrpc::Error::invalid_params("expected source position")
+                    })?;
+                self.live_patcher
+                    .cast(PreviewInfo::ForwardSearch {
+                        path,
+                        line: position.line,
+                        character: position.character,
+                    })
+                    .await
+                    .map_err(|_| tower_lsp::jsonrpc::Error::internal_error())?;
+            }
             unknown_command => {
                 error!(?unknown_command, "Requested to execute");
                 let message = format!("Unknown command `{unknown_command}`.");
@@ -83,15 +134,18 @@ impl LanguageServer for MDBookLS {
                     uri,
                     language_id,
                     version,
-                    text: _,
+                    text,
                 },
         }: DidOpenTextDocumentParams,
     ) {
         info!(uri.path = uri.path(), language_id, version, "did_open");
         match (language_id.as_str(), uri2abs_file_path(&uri)) {
             ("markdown", Some(path)) => {
-                let path = path.into();
-                let msg = PreviewInfo::Opened { path, version };
+                let msg = PreviewInfo::Opened {
+                    path,
+                    version,
+                    content: text,
+                };
                 let task = self.live_patcher.cast(msg);
                 task.await.expect("LivePatcher died.");
             }
@@ -111,7 +165,7 @@ impl LanguageServer for MDBookLS {
         match (content_changes.pop(), uri2abs_file_path(&uri)) {
             (Some(TextDocumentContentChangeEvent { text, .. }), Some(path)) => {
                 let msg = PreviewInfo::ModifiedContent {
-                    path: path.into(),
+                    path,
                     version,
                     content: text,
                 };
@@ -137,7 +191,7 @@ impl LanguageServer for MDBookLS {
     ) {
         info!(uri.path = uri.path(), "did_close");
         if let Some(path) = uri2abs_file_path(&uri) {
-            let msg = PreviewInfo::Closed(path.into());
+            let msg = PreviewInfo::Closed(path);
             let task = self.live_patcher.cast(msg);
             task.await.expect("LivePatcher died.");
         }
@@ -171,8 +225,8 @@ impl Drop for MDBookLS {
     }
 }
 
-fn uri2abs_file_path(uri: &Url) -> Option<&Path> {
-    (uri.scheme() == "file").then_some(Path::new(uri.path()))
+fn uri2abs_file_path(uri: &Url) -> Option<PathBuf> {
+    uri.to_file_path().ok()
 }
 
 fn server_capabilities() -> ServerCapabilities {
@@ -181,7 +235,11 @@ fn server_capabilities() -> ServerCapabilities {
         // we do not need to patch it ourselves.
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         execute_command_provider: Some(ExecuteCommandOptions {
-            commands: vec![OPEN_PREVIEW.into(), STOP_PREVIEW.into()],
+            commands: vec![
+                OPEN_PREVIEW.into(),
+                STOP_PREVIEW.into(),
+                FORWARD_SEARCH.into(),
+            ],
             work_done_progress_options: Default::default(),
         }),
         ..Default::default()

@@ -1,5 +1,7 @@
 # mdBook Language Server
 
+(authored by human unless marked 🤖)
+
 mdBook-LS provides a language server to preview mdBook projects live,
 patching the edited chapter instantly and asynchronously as you type in
 your editor.
@@ -16,14 +18,15 @@ your editor.
     Change the important files of your project (`.gitignore`, `book.toml`,
     `SUMMARY.md`, and the theme directory) and see the book fully rebuilt;
     it reloads the file watcher and the web server as needed.
-- Refresh a patched page to manually trigger a full rebuild.
+- 🤖 Refresh a patched page to retain the latest unsaved preview.
+    Stop and reopen the preview to force a full rebuild.
 
 ## Editor Setup
 
 <details><summary>Installation with, e.g., Cargo.</summary>
 
 ```sh
-cargo install mdbook_ls
+cargo install --git https://github.com/SichangHe/mdbook_ls mdbook_ls
 ```
 
 </details>
@@ -98,20 +101,19 @@ end
 
 I plan to merge this into [nvim-lspconfig] in the future.
 
-### ❓ Visual Studio Code and other editor setup
+### 🤖 Visual Studio Code
 
-<details>
-<summary>No official support, but community plugins are welcome.</summary>
+Install the downloadable VSIX using **Extensions: Install from VSIX**.
+See [the extension instructions](editors/vscode/README.md) for packaging,
+server configuration, and preview commands.
 
-I do not currently use VSCode and these other editors, so I do not wish to
-maintain plugins for them.
+### 🤖 Neovim forward and reverse search
 
-However, it should be straightforward to implement plugins for them since
-mdBook-LS implements the Language Server Protocol (LSP).
-So, please feel free to make a plugin yourself and create an issue for me to
-link it here.
-
-</details>
+For Neovim 0.11+, put [mdbook_ls.lua](editors/nvim/mdbook_ls.lua) on your Lua
+module path and call `require('mdbook_ls').setup()`.
+`MDBookLSForwardSearch` reveals the cursor in the preview.
+The module also registers `MDBookLSOpenPreview` and `MDBookLSStopPreview`.
+The browser sends reverse search through the language server to the editor.
 
 ## mdBook Incremental Preview
 
@@ -137,9 +139,8 @@ It has basically the same functionality as `mdbook serve` but incremental:
 
 - Chapter changes are patched individually and pushed to the browser,
     without refresh.
-- Full rebuilds happen only when the `.gitignore`, `book.toml`, `SUMMARY.md`,
-    or the theme directory changes, or a patched page is requested by
-    a new client.
+- 🤖 Full rebuilds happen when the `.gitignore`, `book.toml`, `SUMMARY.md`,
+    or the theme directory changes, or when preview is stopped and reopened.
     <!-- NOTE: We need to rebuild on theme changes because of templates. -->
 - Build artifacts are stored in a temporary directory in memory.
 - It directly serves static files, additional JS & CSS, and asset files from
@@ -171,8 +172,7 @@ An example is below in [the MathJax support section](#mathjax-support).
     Even the `link` preprocessor works because
     it reads the input files directly.
 - Neither `print.html` or the search index are updated incrementally.
-    They are only rebuilt on full rebuilds, which can be triggered by
-    refreshing a patched page.
+    🤖 They are rebuilt when you stop and reopen the preview.
 - The book template (`index.hbs`) has to include exactly `{{ content }}` in
     the `<main>` tag (the default),
     otherwise the patching will not work correctly.

@@ -1,12 +1,12 @@
 use super::*;
 
 pub async fn serve_reloading(
-    book_root: PathBuf,
     address: SocketAddr,
     build_dir: PathBuf,
-    rebuilder_ref: ActorRef<Rebuilder>,
     mut info_rx: mpsc::Receiver<ServeInfo>,
     patch_registry_ref: ActorRef<PatchRegistry>,
+    reverse_search: Option<mpsc::Sender<SearchLocation>>,
+    forward_search: broadcast::Sender<String>,
 ) {
     let Some(mut info) = info_rx.recv().await else {
         error!("Did not start server because all info senders have been dropped.");
@@ -16,7 +16,7 @@ pub async fn serve_reloading(
     let mut info_buf = Vec::new();
     loop {
         let maybe_maybe_info = select! {
-            _ = serve(book_root.clone(), build_dir.clone(), address, rebuilder_ref.clone(), info.clone(), patch_registry_ref.clone()) => None,
+            _ = serve(build_dir.clone(), address, info.clone(), patch_registry_ref.clone(), reverse_search.clone(), forward_search.clone()) => None,
             maybe_info = info_rx.recv() => Some(maybe_info),
         };
         match maybe_maybe_info {
@@ -44,14 +44,61 @@ pub struct ServeInfo {
 }
 
 pub async fn serve(
-    _book_root: PathBuf,
     build_dir: PathBuf,
     address: SocketAddr,
-    rebuilder_ref: ActorRef<Rebuilder>,
     info: ServeInfo,
     patch_registry_ref: ActorRef<PatchRegistry>,
+    reverse_search: Option<mpsc::Sender<SearchLocation>>,
+    forward_search: broadcast::Sender<String>,
 ) {
     let ServeInfo { src_dir, file_404 } = info;
+    let search_src = src_dir.clone();
+    let search_registry = patch_registry_ref.clone();
+    let search = warp::path("__mdbook_source_search")
+        .and(warp::path::end())
+        .and(warp::header::optional::<String>("origin"))
+        .and(warp::header::<String>("host"))
+        .and_then(|origin: Option<String>, host: String| async move {
+            match origin {
+                Some(origin) if origin == format!("http://{host}") => Ok(()),
+                _ => Err(warp::reject::not_found()),
+            }
+        })
+        .untuple_one()
+        .and(warp::ws())
+        .map(move |ws: Ws| {
+            let registry = search_registry.clone();
+            let (sender, mut forward, src) = (reverse_search.clone(), forward_search.subscribe(), search_src.clone());
+            ws.on_upgrade(move |mut ws| async move {
+                loop {
+                    select! {
+                        value = forward.recv() => {
+                            let value = match value {
+                                Ok(value) => value,
+                                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(broadcast::error::RecvError::Closed) => break,
+                            };
+                            if ws.send(Message::text(value)).await.is_err() { break; }
+                        }
+                        message = ws.next() => {
+                            let Some(Ok(message)) = message else { break; };
+                            let Ok(text) = message.to_str() else { continue; };
+                            let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else { continue; };
+                            let (Some(path), Some(line)) = (value["path"].as_str(), value["line"].as_u64()) else { continue; };
+                            let Ok(line) = u32::try_from(line) else { continue; };
+                            let Ok(path) = std::fs::canonicalize(path) else { continue; };
+                            let Ok(root) = std::fs::canonicalize(&src) else { continue; };
+                            if path.starts_with(root) && path.extension() == Some(OsStr::new("md")) {
+                                if !matches!(registry.call(PatchRegistryQuery::HasSource(path.clone())).await, Ok(PatchRegistryResponse::HasSource(true))) { continue; }
+                                if let Some(sender) = &sender {
+                                    if sender.send(SearchLocation { path, line, character: 0 }).await.is_err() { break; }
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+        });
 
     // Handle WebSockets for live-patching.
     let p_ref = patch_registry_ref.clone();
@@ -69,13 +116,12 @@ pub async fn serve(
             })
         });
 
+    let patched_dir = build_dir.clone();
     let build_artifact = warp::get()
-        // Check if the path has a patch.
         .and(warp::path::full())
-        .and(warp::get().map(move || (patch_registry_ref.clone(), rebuilder_ref.clone())))
+        .and(warp::any().map(move || (patch_registry_ref.clone(), patched_dir.clone())))
         .and_then(filter_patched_path)
-        .untuple_one()
-        .and(warp::fs::dir(build_dir.clone()));
+        .or(warp::fs::dir(build_dir.clone()));
 
     let no_copy_files_except_ext = warp::path::full()
         .and_then(move |full_path: FullPath| async move {
@@ -90,7 +136,8 @@ pub async fn serve(
     // The fallback route for 404 errors
     let fallback_route = warp::fs::file(file_404)
         .map(|reply| warp::reply::with_status(reply, warp::http::StatusCode::NOT_FOUND));
-    let routes = live_patch
+    let routes = search
+        .or(live_patch)
         .or(build_artifact)
         .or(live_patch_script_filter())
         // Fall back to the source directory for assets.
@@ -107,7 +154,8 @@ async fn handle_ws(
     ws: &mut WebSocket,
     patch_registry_ref: ActorRef<PatchRegistry>,
 ) -> Result<()> {
-    let path = Path::new(path.trim_start_matches('/'));
+    let decoded = decode_chapter_path(path)?;
+    let path = decoded.as_path();
     info!(?path, "WebSocket connection.");
 
     let response = patch_registry_ref
@@ -138,28 +186,46 @@ async fn handle_ws(
 
 async fn filter_patched_path(
     full_path: FullPath,
-    (patch_registry_ref, rebuilder_ref): (ActorRef<PatchRegistry>, ActorRef<Rebuilder>),
-) -> Result<(), warp::reject::Rejection> {
-    let path = full_path.as_str().trim_start_matches('/');
+    (patch_registry_ref, build_dir): (ActorRef<PatchRegistry>, PathBuf),
+) -> Result<warp::reply::Html<String>, warp::reject::Rejection> {
+    let path = decode_chapter_path(full_path.as_str()).map_err(|_| warp::reject::not_found())?;
     match patch_registry_ref
-        .call(PatchRegistryQuery::GetHasPatch(path.into()))
+        .call(PatchRegistryQuery::GetPatch(path.clone()))
         .await
     {
-        Ok(PatchRegistryResponse::HasPatch(has_patch)) => {
-            if has_patch {
-                debug!(
-                    path,
-                    "Client requested patched path. Issuing a full rebuild."
-                );
-                rebuilder_ref
-                    .cast(RebuildInfo::Rebuild(false))
-                    .await
-                    .drop_result();
-            }
+        Ok(PatchRegistryResponse::Patch(Some(patch))) => {
+            let relative = if path.as_os_str().is_empty() {
+                Path::new("index.html")
+            } else {
+                &path
+            };
+            let html = fs::read_to_string(build_dir.join(relative))
+                .await
+                .map_err(|_| warp::reject::not_found())?;
+            let main = extract_main_inner_html(&html).map_err(|_| warp::reject::not_found())?;
+            let start = main.as_ptr() as usize - html.as_ptr() as usize;
+            let mut merged = html[..start].to_owned();
+            merged.push_str(&patch);
+            merged.push_str(&html[start + main.len()..]);
+            return Ok(warp::reply::html(merged));
         }
+        Ok(PatchRegistryResponse::Patch(None)) => {}
         response => error!(?response, "Unexpected response calling PatchRegistry"),
     }
-    Ok(())
+    Err(warp::reject::not_found())
+}
+
+fn decode_chapter_path(path: &str) -> Result<PathBuf> {
+    let decoded =
+        percent_encoding::percent_decode_str(path.trim_start_matches('/')).decode_utf8()?;
+    let path = PathBuf::from(decoded.as_ref());
+    if path
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        bail!("Invalid chapter URL path");
+    }
+    Ok(path)
 }
 
 const JS_CONTENT_TYPE: &str = "application/javascript";

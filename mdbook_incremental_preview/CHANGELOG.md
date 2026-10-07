@@ -1,10 +1,24 @@
 # Changelog
+(authored by human unless marked 🤖)
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### 🤖 Added
+
+- Source markers and browser navigation for forward and reverse block search.
+
+### 🤖 Fixed
+
+- Replay open editor buffers after full rebuilds.
+- Stop processing reload messages as HTML patches.
+
+### 🤖 Changed
+
+- Use mdBook 0.5.4's renderer for incremental chapter patches.
 
 ## [0.0.8](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.7...mdbook_incremental_preview-v0.0.8) - 2025-05-01
 

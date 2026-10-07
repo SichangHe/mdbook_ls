@@ -35,15 +35,26 @@ pub fn html_config_n_theme_dir(ctx: &RenderContext) -> Result<(HtmlConfig, PathB
 impl HtmlHbsState {
     /// Render the book to HTML using the Handlebars renderer and
     /// save intermediate state.
-    pub async fn full_render(&mut self, ctx: RenderContext) -> Result<()> {
+    pub async fn full_render(&mut self, mut ctx: RenderContext) -> Result<()> {
         info!("Running the html backend for a full render.");
         let src_dir = ctx.source_dir();
         let destination = ctx.destination.clone();
+        ctx.book.for_each_mut(|item| {
+            if let BookItem::Chapter(chapter) = item {
+                if let Some(path) = &chapter.source_path {
+                    let path = src_dir.join(path);
+                    if let Ok(source) = std::fs::read_to_string(&path) {
+                        source_search::mark_source(&mut chapter.content, &source, &path);
+                    }
+                }
+            }
+        });
         let book = &ctx.book;
         block_n_yield(|| HtmlHandlebars::new().render(&ctx)).await?;
         block_n_yield(|| inject_live_patch_script(&destination)).await?;
 
         let mut is_index = true;
+        self.index_path = None;
         self.path2ctxs.clear();
         let items = || {
             book.iter().filter_map(|item| {
@@ -183,9 +194,15 @@ pub async fn try_patch_chapter_w_content(
         "Patching with content.",
     );
     yield_now().await;
+    let source = content.clone();
     let chapter = Chapter::new(chapter_name, content, relative_path, vec![]);
     let patcher_book = Book::new_with_items(vec![BookItem::Chapter(chapter)]);
-    let (preprocessed_book, preprocess_ctx) = book.preprocess_book(patcher_book).await?;
+    let (mut preprocessed_book, preprocess_ctx) = book.preprocess_book(patcher_book).await?;
+    preprocessed_book.for_each_mut(|item| {
+        if let BookItem::Chapter(chapter) = item {
+            source_search::mark_source(&mut chapter.content, &source, path);
+        }
+    });
     let patch_html = render_patch_html(
         book,
         preprocessed_book,
@@ -243,7 +260,7 @@ fn validate_patch_path(book: &Book, relative_path: &Path, html_path: &Path) -> R
     }
 }
 
-fn extract_main_inner_html(html: &str) -> Result<&str> {
+pub(crate) fn extract_main_inner_html(html: &str) -> Result<&str> {
     let start = html
         .find("<main")
         .and_then(|pos| html[pos..].find('>').map(|end| pos + end + 1))

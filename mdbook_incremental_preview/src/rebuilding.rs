@@ -1,4 +1,5 @@
 use super::*;
+use crate::source_search::encode_url_path;
 
 // NOTE: Below is adapted from
 // <https://github.com/rust-lang/mdBook/blob/3bdcc0a5a6f3c85dd751350774261dbc357b02bd/src/cmd/watch/native.rs>.
@@ -12,6 +13,7 @@ pub struct Rebuilder {
     book_toml: PathBuf,
     src_dir: Arc<Path>,
     mutables: RebuilderMut,
+    forward_search: broadcast::Sender<String>,
 }
 
 impl Actor for Rebuilder {
@@ -31,6 +33,12 @@ impl Actor for Rebuilder {
     async fn handle_cast(&mut self, msg: Self::Cast, env: &mut ActorEnv<Self>) -> Result<()> {
         match msg {
             RebuildInfo::Rebuild(reload) => {
+                if self.mutables.rebuilding {
+                    self.mutables.pending_rebuild =
+                        Some(self.mutables.pending_rebuild.unwrap_or(false) || reload);
+                    return Ok(());
+                }
+                self.mutables.rebuilding = true;
                 info!(?self.build_dir, "Full rebuild.");
                 _ = self.mutables.rebuild_join_set.spawn(load_book(
                     self.book_root.clone(),
@@ -50,6 +58,11 @@ impl Actor for Rebuilder {
                 self.patch_registry_ref
                     .cast(PatchRegistryRequest::Rebuild {
                         index_path: hbs_state.index_path.clone(),
+                        source_paths: hbs_state
+                            .path2ctxs
+                            .keys()
+                            .filter_map(|path| std::fs::canonicalize(path).ok())
+                            .collect(),
                     })
                     .await
                     .context("Clearing the patch registry")?;
@@ -62,11 +75,34 @@ impl Actor for Rebuilder {
                 (m.book, m.html_config, m.theme_dir, m.hbs_state) =
                     (Some(book), html_config, theme_dir, hbs_state);
                 // Re-patch the chapters patched after a rebuild.
-                let paths = running_patch_join_sets(&mut m.patch_join_sets);
-                let (env, msg) = (env.ref_.clone(), RebuildInfo::ChangedPaths(paths));
-                spawn(async move { env.cast(msg).await.drop_result() });
+                let paths = running_patch_join_sets(&mut m.patch_join_sets)
+                    .into_iter()
+                    .filter(|path| !m.contents.contains_key(path))
+                    .collect();
+                let (ref_, msg) = (env.ref_.clone(), RebuildInfo::ChangedPaths(paths));
+                spawn(async move { ref_.cast(msg).await.drop_result() });
+                for (path, content) in self.mutables.contents.clone() {
+                    self.patch_content(path, content);
+                }
+                self.maybe_forward_search();
+                self.finish_rebuild(env.ref_.clone());
             }
+            RebuildInfo::RebuildFailed => self.finish_rebuild(env.ref_.clone()),
             RebuildInfo::ChangedPaths(paths) => {
+                // notify's access events also reach the mini debouncer; only changed
+                // metadata should trigger rebuilds, otherwise reads cause a loop.
+                let paths: Vec<_> = paths
+                    .into_iter()
+                    .filter(|path| {
+                        let stamp = std::fs::metadata(path)
+                            .ok()
+                            .map(|metadata| (metadata.modified().ok(), metadata.len()));
+                        self.mutables.file_stamps.insert(path.clone(), stamp) != Some(stamp)
+                    })
+                    .collect();
+                if paths.is_empty() {
+                    return Ok(());
+                }
                 info!(?paths, "Directories changed.");
                 let m = &mut self.mutables;
                 let full_rebuild = match &m.maybe_gitignore {
@@ -103,25 +139,34 @@ impl Actor for Rebuilder {
                 }
             }
             RebuildInfo::ModifiedContent { path, content } => {
+                self.mutables.contents.insert(path.clone(), content.clone());
+                self.patch_content(path, content);
+            }
+            RebuildInfo::Closed(path) => {
                 let m = &mut self.mutables;
-                if let (Some(book), Some((arc_path, ctx))) =
-                    (&m.book, m.hbs_state.path2ctxs.get_key_value(path.as_path()))
-                {
-                    let task = patch_chapter_w_content(
-                        arc_path.clone(),
-                        self.src_dir.clone(),
-                        ctx.chapter_name.clone(),
-                        ctx.html_path.clone(),
-                        content,
-                        book.clone(),
-                        self.patch_registry_ref.clone(),
-                    );
-                    _ = m.patch_join_sets.entry(path).or_default().spawn(task);
+                m.contents.remove(&path);
+                if let Some(mut tasks) = m.patch_join_sets.remove(&path) {
+                    tasks.abort_all();
+                }
+                if let Some(book) = &m.book {
+                    m.hbs_state
+                        .patch(
+                            book,
+                            &self.src_dir,
+                            [path],
+                            &self.patch_registry_ref,
+                            &mut m.patch_join_sets,
+                        )
+                        .await;
                 }
             }
             RebuildInfo::OpenBrowser(path) => {
                 self.mutables.open_browser_at = Some(path);
                 self.maybe_open_browser();
+            }
+            RebuildInfo::ForwardSearch(location) => {
+                self.mutables.pending_search = Some(location);
+                self.maybe_forward_search();
             }
         }
         Ok(())
@@ -129,6 +174,9 @@ impl Actor for Rebuilder {
 }
 
 pub enum RebuildInfo {
+    RebuildFailed,
+    Closed(PathBuf),
+    ForwardSearch(SearchLocation),
     /// Instruction to rebuild, and if a full reload should be considered.
     Rebuild(bool),
     /// Newly built book and state.
@@ -136,12 +184,34 @@ pub enum RebuildInfo {
     /// Paths changed.
     ChangedPaths(Vec<PathBuf>),
     /// Content of a modified path.
-    ModifiedContent { path: PathBuf, content: String },
+    ModifiedContent {
+        path: PathBuf,
+        content: String,
+    },
     /// Open the browser for the chapter of the given absolute path.
     OpenBrowser(PathBuf),
 }
 
 impl Rebuilder {
+    fn patch_content(&mut self, path: PathBuf, content: String) {
+        let m = &mut self.mutables;
+        if let (Some(book), Some((arc_path, ctx))) =
+            (&m.book, m.hbs_state.path2ctxs.get_key_value(path.as_path()))
+        {
+            let task = patch_chapter_w_content(
+                arc_path.clone(),
+                self.src_dir.clone(),
+                ctx.chapter_name.clone(),
+                ctx.html_path.clone(),
+                content,
+                book.clone(),
+                self.patch_registry_ref.clone(),
+            );
+            let tasks = m.patch_join_sets.entry(path).or_default();
+            tasks.abort_all();
+            _ = tasks.spawn(task);
+        }
+    }
     async fn handle_reload(
         &mut self,
         book: &MDBookCore,
@@ -177,6 +247,12 @@ impl Rebuilder {
         yield_now().await;
 
         if src_dir_changed || theme_dir_changed || extra_watch_dirs_changed {
+            for path in [self.book_toml.clone(), src_dir.join("SUMMARY.md")] {
+                let stamp = std::fs::metadata(&path)
+                    .ok()
+                    .map(|metadata| (metadata.modified().ok(), metadata.len()));
+                m.file_stamps.insert(path, stamp);
+            }
             info!(
                 ?self.book_root,
                 ?src_dir,
@@ -244,6 +320,13 @@ impl Rebuilder {
         });
     }
 
+    fn finish_rebuild(&mut self, env: ActorRef<Self>) {
+        self.mutables.rebuilding = false;
+        if let Some(reload) = self.mutables.pending_rebuild.take() {
+            self.send_rebuild_info(env, reload);
+        }
+    }
+
     fn maybe_open_browser(&mut self) {
         let m = &mut self.mutables;
         if m.summary_md != PathBuf::default() {
@@ -253,10 +336,36 @@ impl Rebuilder {
                     .strip_prefix(&self.src_dir)
                     .unwrap_or(&path)
                     .with_extension("html");
-                let address = format!("http://{}/{}", self.socket_address, path.display());
+                let address = format!("http://{}/{}", self.socket_address, encode_url_path(&path));
                 spawn_blocking(move || open(address));
             }
         }
+        self.maybe_forward_search();
+    }
+
+    fn maybe_forward_search(&mut self) {
+        let Some(location) = self.mutables.pending_search.as_ref() else {
+            return;
+        };
+        let Some(ctx) = self
+            .mutables
+            .hbs_state
+            .path2ctxs
+            .get(location.path.as_path())
+        else {
+            return;
+        };
+        let path = encode_url_path(&ctx.html_path);
+        let url = format!("/{path}#mdbook-source-line={}", location.line);
+        if self
+            .forward_search
+            .send(serde_json::json!({"url": url}).to_string())
+            .is_err()
+        {
+            let address = format!("http://{}{url}", self.socket_address);
+            spawn_blocking(move || open(address));
+        }
+        self.mutables.pending_search = None;
     }
 
     pub fn new(
@@ -266,8 +375,13 @@ impl Rebuilder {
         info_tx: mpsc::Sender<ServeInfo>,
         patch_registry_ref: ActorRef<PatchRegistry>,
         open_browser_at: Option<PathBuf>,
-        ignored_paths: IgnoredPaths,
+        channels: (
+            IgnoredPaths,
+            broadcast::Sender<String>,
+            HashMap<PathBuf, String>,
+        ),
     ) -> Self {
+        let (ignored_paths, forward_search, contents) = channels;
         let book_toml = book_root.join("book.toml");
         Self {
             book_root,
@@ -278,10 +392,12 @@ impl Rebuilder {
             book_toml,
             src_dir: Path::new("").into(),
             mutables: RebuilderMut {
+                contents,
                 open_browser_at,
                 ignored_paths,
                 ..Default::default()
             },
+            forward_search,
         }
     }
 }
@@ -336,8 +452,17 @@ async fn load_book(
     reload: bool,
     env: ActorRef<Rebuilder>,
 ) {
-    if let Err(err) = try_load_book(&book_root, &build_dir, reload, Default::default(), env).await {
+    if let Err(err) = try_load_book(
+        &book_root,
+        &build_dir,
+        reload,
+        Default::default(),
+        env.clone(),
+    )
+    .await
+    {
         error!(?err, "loading and preprocessing the book.");
+        env.cast(RebuildInfo::RebuildFailed).await.drop_result();
     }
 }
 
@@ -385,6 +510,11 @@ pub type PatchJoinSets = HashMap<PathBuf, TwoJoinSet<()>>;
 /// The mutable parts of [`Rebuilder`].
 #[derive(Default)]
 pub struct RebuilderMut {
+    rebuilding: bool,
+    pending_rebuild: Option<bool>,
+    file_stamps: HashMap<PathBuf, Option<(Option<std::time::SystemTime>, u64)>>,
+    contents: HashMap<PathBuf, String>,
+    pending_search: Option<SearchLocation>,
     open_browser_at: Option<PathBuf>,
     _debouncer_to_keep_watcher_alive: Option<Debouncer<RecommendedWatcher>>,
     book: Option<Arc<MDBookCore>>,

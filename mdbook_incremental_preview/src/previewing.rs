@@ -8,6 +8,7 @@ pub struct Previewer {
     socket_address: SocketAddr,
     open_browser_at: Option<PathBuf>,
     versions: HashMap<PathBuf, i32>,
+    contents: HashMap<PathBuf, String>,
     ignored_paths: IgnoredPaths,
     patch_registry: Option<(
         JoinHandle<ActorRunResult<PatchRegistry>>,
@@ -15,6 +16,8 @@ pub struct Previewer {
     )>,
     rebuilder: Option<(JoinHandle<ActorRunResult<Rebuilder>>, ActorRef<Rebuilder>)>,
     server: Option<JoinHandle<()>>,
+    reverse_search: Option<mpsc::Sender<SearchLocation>>,
+    forward_search: broadcast::Sender<String>,
 }
 
 impl Previewer {
@@ -25,11 +28,20 @@ impl Previewer {
             socket_address: ([127, 0, 0, 1], 3000).into(),
             open_browser_at: Some("".into()),
             versions: Default::default(),
+            contents: Default::default(),
             ignored_paths: Default::default(),
             patch_registry: None,
             rebuilder: None,
             server: None,
+            reverse_search: None,
+            forward_search: broadcast::channel(8).0,
         })
+    }
+
+    /// Send browser modifier-click source positions to the editor.
+    pub fn with_reverse_search(mut self, sender: mpsc::Sender<SearchLocation>) -> Self {
+        self.reverse_search = Some(sender);
+        self
     }
 
     /// This function does not check if the actors and
@@ -46,7 +58,11 @@ impl Previewer {
             info_tx.clone(),
             self.get_or_make_patch_registry(env),
             self.open_browser_at.take(),
-            self.ignored_paths.clone(),
+            (
+                self.ignored_paths.clone(),
+                self.forward_search.clone(),
+                self.contents.clone(),
+            ),
         );
         yield_now().await;
         let (handle, rebuilder_ref) =
@@ -57,12 +73,12 @@ impl Previewer {
         // `LivePatcher`.
         yield_now().await;
         self.server = Some(spawn(serve_reloading(
-            self.book_root.to_path_buf(),
             self.socket_address,
             self.build_dir().to_owned(),
-            rebuilder_ref,
             info_rx,
             self.get_or_make_patch_registry(env),
+            self.reverse_search.clone(),
+            self.forward_search.clone(),
         )));
     }
 
@@ -114,6 +130,25 @@ impl Actor for Previewer {
     type Reply = ();
     async fn handle_cast(&mut self, msg: Self::Cast, env: &mut ActorEnv<Self>) -> Result<()> {
         match msg {
+            PreviewInfo::ForwardSearch {
+                path,
+                line,
+                character,
+            } => {
+                if self.rebuilder.is_none() {
+                    self.open_browser_at = None;
+                    self.start(&env.ref_).await;
+                }
+                if let Some((_, rebuilder)) = &self.rebuilder {
+                    rebuilder
+                        .cast(RebuildInfo::ForwardSearch(SearchLocation {
+                            path,
+                            line,
+                            character,
+                        }))
+                        .await?;
+                }
+            }
             PreviewInfo::BookRoot(book_root) if book_root == *self.book_root => {
                 debug!(?book_root, "Ignoring unchanged.");
             }
@@ -148,9 +183,22 @@ impl Actor for Previewer {
                 info!("Stopping live patching.");
                 self.stop().await;
             }
-            PreviewInfo::Opened { path, version } => {
+            PreviewInfo::Opened {
+                path,
+                version,
+                content,
+            } => {
                 debug!(?path, version, "Opened. Starting ignoring its file events.");
                 self.ignored_paths.write().unwrap().insert(path.clone());
+                self.contents.insert(path.clone(), content.clone());
+                if let Some((_, rebuilder)) = &self.rebuilder {
+                    rebuilder
+                        .cast(RebuildInfo::ModifiedContent {
+                            path: path.clone(),
+                            content,
+                        })
+                        .await?;
+                }
                 self.versions
                     .entry(path)
                     .and_modify(|v| *v = version.max(*v))
@@ -176,6 +224,7 @@ impl Actor for Previewer {
                     }
                 };
                 if updated {
+                    self.contents.insert(path.clone(), content.clone());
                     match &self.rebuilder {
                         Some((_, rebuilder_ref)) => {
                             debug!(?path, version, "Modified content.");
@@ -189,6 +238,10 @@ impl Actor for Previewer {
             PreviewInfo::Closed(path) => {
                 debug!(?path, "Closed. Stopping ignoring its file events.");
                 self.versions.remove(&path);
+                self.contents.remove(&path);
+                if let Some((_, rebuilder)) = &self.rebuilder {
+                    rebuilder.cast(RebuildInfo::Closed(path.clone())).await?;
+                }
                 self.ignored_paths.write().unwrap().remove(&path);
             }
         }
@@ -211,6 +264,12 @@ impl Actor for Previewer {
 
 #[derive(Clone, Debug)]
 pub enum PreviewInfo {
+    // 🧑 "implement forward and reverse searches and integrate with nvim and vscode"
+    ForwardSearch {
+        path: PathBuf,
+        line: u32,
+        character: u32,
+    },
     /// Update the book root.
     BookRoot(PathBuf),
     OpenPreview {
@@ -221,7 +280,11 @@ pub enum PreviewInfo {
     /// Stop the preview server.
     StopPreview,
     /// Opened path.
-    Opened { path: PathBuf, version: i32 },
+    Opened {
+        path: PathBuf,
+        version: i32,
+        content: String,
+    },
     /// Content of a modified path.
     ModifiedContent {
         path: PathBuf,
@@ -230,6 +293,14 @@ pub enum PreviewInfo {
     },
     /// Closed path.
     Closed(PathBuf),
+}
+
+/// An absolute source path and zero-based editor position.
+#[derive(Clone, Debug)]
+pub struct SearchLocation {
+    pub path: PathBuf,
+    pub line: u32,
+    pub character: u32,
 }
 
 impl Drop for Previewer {

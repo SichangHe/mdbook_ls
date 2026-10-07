@@ -1,0 +1,7 @@
+node_modules/**
+src/**
+test/**
+.vscode-test/**
+package-lock.json
+*.vsix
+design.md

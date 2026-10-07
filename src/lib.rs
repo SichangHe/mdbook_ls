@@ -1,7 +1,4 @@
-use std::{
-    net::SocketAddr,
-    path::{Path, PathBuf},
-};
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
 use mdbook_incremental_preview::previewing::*;

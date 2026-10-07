@@ -9,6 +9,7 @@ pub struct PatchRegistry {
     patches: HashMap<PathBuf, (String, watch::Sender<String>)>,
     /// Relative rendered HTML path of the index chapter.
     index_path: Option<PathBuf>,
+    source_paths: HashSet<PathBuf>,
 }
 
 impl Actor for PatchRegistry {
@@ -38,14 +39,15 @@ impl Actor for PatchRegistry {
                     }
                 };
             }
-            PatchRegistryRequest::Rebuild { index_path } => {
+            PatchRegistryRequest::Rebuild {
+                index_path,
+                source_paths,
+            } => {
+                self.source_paths = source_paths;
                 for (_, (_, watcher)) in self.patches.drain() {
                     watcher.send_modify(|v| *v = "__RELOAD".into())
                 }
-                if let Some(index_path) = index_path {
-                    self.index_path = Some(index_path);
-                    debug!(?self.index_path, "Updated index path in patch registry.")
-                }
+                self.index_path = index_path;
             }
             PatchRegistryRequest::Clear => self.patches.clear(),
         }
@@ -60,6 +62,24 @@ impl Actor for PatchRegistry {
     ) -> Result<()> {
         debug!(?msg, "PatchRegistry::handle_call");
         match msg {
+            PatchRegistryQuery::GetPatch(path) => {
+                let path = self.resolve_index_path(path);
+                let patch = self
+                    .patches
+                    .get(path.as_ref())
+                    .map(|entry| entry.0.clone())
+                    .filter(|html| !html.is_empty());
+                response_sender
+                    .send(PatchRegistryResponse::Patch(patch))
+                    .drop_result();
+            }
+            PatchRegistryQuery::HasSource(path) => {
+                response_sender
+                    .send(PatchRegistryResponse::HasSource(
+                        self.source_paths.contains(&path),
+                    ))
+                    .drop_result();
+            }
             PatchRegistryQuery::Watch(path) => {
                 let path = self.resolve_index_path(path).into_owned();
                 let watch_receiver = match self.patches.entry(path) {
@@ -74,13 +94,6 @@ impl Actor for PatchRegistry {
                     .send(PatchRegistryResponse::WatchReceiver(watch_receiver))
                     .drop_result();
             }
-            PatchRegistryQuery::GetHasPatch(path) => {
-                let path = self.resolve_index_path(path);
-                let has_patch = self.patches.contains_key(path.as_ref());
-                response_sender
-                    .send(PatchRegistryResponse::HasPatch(has_patch))
-                    .drop_result();
-            }
         }
         Ok(())
     }
@@ -92,7 +105,10 @@ pub enum PatchRegistryRequest {
     /// Register a new patch with rendered HTML content.
     NewPatch(PathBuf, String),
     /// The book is rebuilt, with an optional new index path.
-    Rebuild { index_path: Option<PathBuf> },
+    Rebuild {
+        index_path: Option<PathBuf>,
+        source_paths: HashSet<PathBuf>,
+    },
     /// Clear the registry, like a soft shutdown.
     Clear,
 }
@@ -100,26 +116,28 @@ pub enum PatchRegistryRequest {
 /// A query for the patch registry.
 #[derive(Debug)]
 pub enum PatchRegistryQuery {
+    GetPatch(PathBuf),
+    HasSource(PathBuf),
     /// Watch a path for changes.
     Watch(PathBuf),
-    /// Get if a path has patches.
-    GetHasPatch(PathBuf),
 }
 
 /// A response from patch registry.
 #[derive(Debug)]
 pub enum PatchRegistryResponse {
+    Patch(Option<String>),
+    HasSource(bool),
     /// Receiver to watch for patches.
     WatchReceiver(watch::Receiver<String>),
-    /// If a path has patches.
-    HasPatch(bool),
 }
 
 impl PatchRegistry {
     /// Convert HTTP `path` to the index path if it is the path to root.
     fn resolve_index_path(&self, path: PathBuf) -> Cow<'_, Path> {
         match &self.index_path {
-            Some(index_path) if path == PathBuf::new() => Cow::Borrowed(index_path),
+            Some(index_path) if path == PathBuf::new() || path == Path::new("index.html") => {
+                Cow::Borrowed(index_path)
+            }
             _ => Cow::Owned(path),
         }
     }

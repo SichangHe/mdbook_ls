@@ -1,10 +1,24 @@
 # Changelog
+(authored by human unless marked 🤖)
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### 🤖 Added
+
+- Downloadable VS Code extension and Neovim 0.11 integration with forward and reverse source search.
+
+### 🤖 Fixed
+
+- Decode workspace and document file URIs correctly, including spaces.
+- Preserve unsaved editor content when preview starts or rebuilds.
+
+### 🤖 Changed
+
+- Track the mdBook 0.5.4 fork through pinned Git dependencies.
 
 ## [0.0.5](https://github.com/SichangHe/mdbook_ls/compare/mdbook_ls-v0.0.4...mdbook_ls-v0.0.5) - 2025-05-01
 
