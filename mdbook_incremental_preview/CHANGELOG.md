@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9](https://github.com/SichangHe/mdbook_ls/compare/mdbook_incremental_preview-v0.0.8...mdbook_incremental_preview-v0.0.9) - 2026-10-07
+
+### Added
+
+- add editor source search and downloadable clients
+
 ### 🤖 Added
 
 - Source markers and browser navigation for forward and reverse block search.

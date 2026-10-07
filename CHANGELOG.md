@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/SichangHe/mdbook_ls/compare/mdbook_ls-v0.0.5...mdbook_ls-v0.0.6) - 2026-10-07
+
+### Added
+
+- add editor source search and downloadable clients
+
 ### 🤖 Added
 
 - Downloadable VS Code extension and Neovim 0.11 integration with forward and reverse source search.
