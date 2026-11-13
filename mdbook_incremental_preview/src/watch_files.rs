@@ -8,6 +8,7 @@ pub fn watch_file_changes<F>(
     theme_dir: &Path,
     book_toml: &Path,
     extra_watch_dirs: &[PathBuf],
+    additional_assets: &[PathBuf],
     event_handler: F,
 ) -> Debouncer<RecommendedWatcher>
 where
@@ -23,6 +24,17 @@ where
     };
 
     let watcher = debouncer.watcher();
+
+    let asset_parents: HashSet<_> = additional_assets
+        .iter()
+        .filter_map(|asset| book_root.join(asset).parent().map(Path::to_path_buf))
+        .collect();
+    for parent in asset_parents {
+        if let Err(err) = watcher.watch(&parent, NonRecursive) {
+            error!(?parent, ?err, "Watching additional assets");
+            std::process::exit(1);
+        }
+    }
 
     // Add the source directory to the watcher
     if let Err(err) = watcher.watch(src_dir, Recursive) {

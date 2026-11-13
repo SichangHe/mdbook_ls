@@ -119,7 +119,15 @@ impl Actor for Rebuilder {
                     _ if paths.contains(&self.book_toml) => Some(true),
                     // `Summary.md` or theme changed, make a full rebuild.
                     _ if paths.contains(&m.summary_md)
-                        || paths.iter().any(|path| path.starts_with(&m.theme_dir)) =>
+                        || paths.iter().any(|path| path.starts_with(&m.theme_dir))
+                        // 🧑 "update ... mdbook_ls ... to track the latest mdbook version"
+                        || paths.iter().any(|path| {
+                            (path.starts_with(&self.src_dir)
+                                && path.extension().is_none_or(|ext| ext != "md"))
+                                || m.html_config.additional_js.iter()
+                                    .chain(&m.html_config.additional_css)
+                                    .any(|asset| self.book_root.join(asset) == *path)
+                        }) =>
                     {
                         Some(false)
                     }
@@ -246,7 +254,12 @@ impl Rebuilder {
         );
         yield_now().await;
 
-        if src_dir_changed || theme_dir_changed || extra_watch_dirs_changed {
+        if src_dir_changed
+            || theme_dir_changed
+            || extra_watch_dirs_changed
+            || additional_js_changed
+            || additional_css_changed
+        {
             for path in [self.book_toml.clone(), src_dir.join("SUMMARY.md")] {
                 let stamp = std::fs::metadata(&path)
                     .ok()
@@ -274,6 +287,12 @@ impl Rebuilder {
                 Ok(_) => {}
                 Err(err) => error!(?err, "Watching for changes"),
             };
+            let additional_assets: Vec<_> = html_config
+                .additional_js
+                .iter()
+                .chain(&html_config.additional_css)
+                .cloned()
+                .collect();
             let watch = || {
                 watch_file_changes(
                     &self.book_root,
@@ -281,6 +300,7 @@ impl Rebuilder {
                     theme_dir,
                     &self.book_toml,
                     &config.build.extra_watch_dirs,
+                    &additional_assets,
                     event_handler,
                 )
             };

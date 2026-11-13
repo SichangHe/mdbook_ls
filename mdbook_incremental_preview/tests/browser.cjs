@@ -8,13 +8,18 @@ const {chromium} = require('playwright');
 (async () => {
  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mdbook-search-browser-'));
  await fs.mkdir(path.join(root,'src'));
- await fs.writeFile(path.join(root,'book.toml'), '[book]\ntitle="search"\n');
+ const bookConfig = '[book]\ntitle="search"\n[output.html]\nadditional-css=["custom.css"]\nadditional-js=["custom.js"]\n';
+ await fs.writeFile(path.join(root,'book.toml'), bookConfig);
+ await fs.writeFile(path.join(root,'custom.css'), 'body { --asset-version: original; }');
+ await fs.writeFile(path.join(root,'custom.js'), 'window.assetVersion = "original";');
  await fs.writeFile(path.join(root,'src/SUMMARY.md'), '# Summary\n\n- [Chapter](<chapter #?.md>)\n');
  const text = '# heading\n\nparagraph\n\n- list item\n\n```rust\nlet x = 1;\n```\n\n    indented code\n\n---\n';
  const chapter = path.join(root,'src/chapter #?.md');
  const chapterUri = pathToFileURL(chapter).href;
  const chapterUrl = 'http://127.0.0.1:33029/chapter%20%23%3F.html';
  await fs.writeFile(chapter,text.replace('paragraph','saved disk paragraph'));
+ const asset = path.join(root,'src/image.svg');
+ await fs.writeFile(asset,'<svg xmlns="http://www.w3.org/2000/svg"><title>original asset</title></svg>');
  const child = spawn(process.env.MDBOOK_LS_BINARY || path.resolve(__dirname,'../../target/debug/mdbook-ls'),[],{stdio:['pipe','pipe','pipe']});
  child.stderr.on('data', x => process.stderr.write(x));
  let buffer=Buffer.alloc(0), id=0; const pending=new Map(), events=[];
@@ -30,6 +35,27 @@ const {chromium} = require('playwright');
   for(let n=0;n<100;n++){try{await page.goto(chapterUrl);break;}catch(e){await new Promise(r=>setTimeout(r,100));}}
   await page.waitForSelector('main h1');
   await page.waitForFunction(()=>document.querySelector('main > p')?.textContent==='paragraph');
+  const assetUrl = 'http://127.0.0.1:33029/image.svg';
+  assert((await (await page.request.get(assetUrl)).text()).includes('original asset'));
+  await fs.writeFile(asset,'<svg xmlns="http://www.w3.org/2000/svg"><title>updated asset</title></svg>');
+  await page.waitForFunction(async url => (await (await fetch(url)).text()).includes('updated asset'),assetUrl);
+  for (const version of ['updated', 'replaced']) {
+   await fs.writeFile(path.join(root,'custom.css.tmp'), `body { --asset-version: ${version}; }`);
+   await fs.rename(path.join(root,'custom.css.tmp'),path.join(root,'custom.css'));
+   await fs.writeFile(path.join(root,'custom.js.tmp'), `window.assetVersion = "${version}";`);
+   await fs.rename(path.join(root,'custom.js.tmp'),path.join(root,'custom.js'));
+   await page.waitForFunction(async expected => {
+    const html = await (await fetch(location.href)).text();
+    const doc = new DOMParser().parseFromString(html,'text/html');
+    const css = [...doc.querySelectorAll('link[href]')].find(el => el.getAttribute('href').includes('custom'));
+    const js = [...doc.querySelectorAll('script[src]')].find(el => el.getAttribute('src').includes('custom'));
+    return css && js && (await (await fetch(css.getAttribute('href'))).text()).includes(expected)
+      && (await (await fetch(js.getAttribute('src'))).text()).includes(expected);
+   },version);
+   await page.waitForTimeout(700);
+   await page.reload();
+   await page.waitForFunction(expected=>getComputedStyle(document.body).getPropertyValue('--asset-version').trim()===expected && window.assetVersion===expected,version);
+  }
   await page.waitForTimeout(500);
   for(const [selector,line] of [['main h1',0],['main > p',2],['main li',4],['main pre',6],['main pre:nth-of-type(2)',10],['main hr',12]]){
    const initial=events.length;await page.locator(selector).first().click({modifiers:['Control']});
@@ -49,7 +75,7 @@ const {chromium} = require('playwright');
    await page.goto('http://127.0.0.1:33029'+alias);
    await page.waitForFunction(()=>document.querySelector('main').textContent.includes('UNSAVED'));
   }
-  await fs.writeFile(path.join(root,'book.toml'),'[book]\ntitle="rebuilt search"\n');
+  await fs.writeFile(path.join(root,'book.toml'),bookConfig.replace('title="search"','title="rebuilt search"'));
   await page.waitForTimeout(700);
   await page.reload();
   await page.waitForFunction(()=>document.querySelector('main').textContent.includes('UNSAVED'));
